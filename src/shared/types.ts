@@ -7,10 +7,6 @@ export interface Config {
     path: string;
     memFolder: string;
   };
-  worker: {
-    port: number;
-    autoStart: boolean;
-  };
   capture: {
     fileEdits: boolean;
     bashCommands: boolean;
@@ -223,31 +219,3 @@ export interface SessionEndInput {
   transcript_path: string;
 }
 
-/**
- * Worker API types
- */
-
-export interface WorkerHealthResponse {
-  status: 'ok' | 'error';
-  uptime: number;
-  sessionsActive: number;
-}
-
-export interface CaptureObservationRequest {
-  sessionId: string;
-  observation: Observation;
-}
-
-export interface SessionStartRequest {
-  sessionId: string;
-  project: string;
-  projectPath: string;
-  startTime: string;
-}
-
-export interface SessionEndRequest {
-  sessionId: string;
-  endType: 'stop' | 'end';
-  endTime: string;
-  transcriptPath?: string;
-}

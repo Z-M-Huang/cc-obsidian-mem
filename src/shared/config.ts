@@ -8,10 +8,6 @@ const DEFAULT_CONFIG: Config = {
     path: path.join(os.homedir(), 'ObsidianVault'),
     memFolder: '_claude-mem',
   },
-  worker: {
-    port: 37781,
-    autoStart: true,
-  },
   capture: {
     fileEdits: true,
     bashCommands: true,
@@ -133,9 +129,6 @@ function deepMerge(target: Config, source: Partial<Config>): Config {
 
   if (source.vault) {
     result.vault = { ...result.vault, ...source.vault };
-  }
-  if (source.worker) {
-    result.worker = { ...result.worker, ...source.worker };
   }
   if (source.capture) {
     result.capture = {

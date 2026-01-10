@@ -4,10 +4,8 @@
   "description": "Obsidian-based persistent memory system for Claude Code",
   "type": "module",
   "scripts": {
-    "build": "bun build src/mcp-server/index.ts --outdir dist/mcp-server --target bun && bun build src/worker/index.ts --outdir dist/worker --target bun",
+    "build": "bun build src/mcp-server/index.ts --outdir dist/mcp-server --target bun",
     "dev:mcp": "bun --watch src/mcp-server/index.ts",
-    "dev:worker": "bun --watch src/worker/index.ts",
-    "start:worker": "bun src/worker/index.ts",
     "test": "bun test",
     "setup": "bun src/cli/setup.ts"
   },
@@ -15,7 +13,6 @@
     "@anthropic-ai/sdk": "^0.40.0",
     "@modelcontextprotocol/sdk": "^1.12.0",
     "gray-matter": "^4.0.3",
-    "hono": "^4.6.0",
     "zod": "^3.24.0"
   },
   "devDependencies": {

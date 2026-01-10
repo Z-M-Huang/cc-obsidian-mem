@@ -1,10 +1,18 @@
-import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { Hono } from 'hono';
-import { createServer } from '../src/worker/server.js';
-import type { Config, Session } from '../src/shared/types.js';
+import type { Config } from '../src/shared/types.js';
+import {
+  startSession,
+  endSession,
+  readSession,
+  clearSessionFile,
+  getSessionFilePath,
+  addObservation,
+  listActiveSessions,
+  getSessionsDir,
+} from '../src/shared/session-store.js';
 
 /**
  * Create a valid test config with the given vault path and overrides
@@ -14,10 +22,6 @@ function createTestConfig(vaultPath: string, overrides?: Partial<Config>): Confi
     vault: {
       path: vaultPath,
       memFolder: '_claude-mem',
-    },
-    worker: {
-      port: 0,
-      autoStart: false,
     },
     capture: {
       fileEdits: true,
@@ -60,7 +64,6 @@ function createTestConfig(vaultPath: string, overrides?: Partial<Config>): Confi
 describe('Decision Persistence', () => {
   let tempDir: string;
   let vaultPath: string;
-  let app: Hono;
   let config: Config;
 
   beforeEach(() => {
@@ -73,42 +76,43 @@ describe('Decision Persistence', () => {
     });
 
     config = createTestConfig(vaultPath);
-    app = createServer(config);
+
+    // Clean up sessions directory
+    const sessionsDir = getSessionsDir();
+    if (fs.existsSync(sessionsDir)) {
+      fs.rmSync(sessionsDir, { recursive: true, force: true });
+    }
   });
 
   afterEach(() => {
-    // Clean up
+    // Clean up sessions directory
+    const sessionsDir = getSessionsDir();
+    if (fs.existsSync(sessionsDir)) {
+      fs.rmSync(sessionsDir, { recursive: true, force: true });
+    }
     fs.rmSync(tempDir, { recursive: true, force: true });
   });
 
-  test('decision persistence endpoint exists and responds', async () => {
+  test('session can be started and ended with file-based store', () => {
     const testSessionId = 'test-session-' + Date.now();
 
-    // Start a session first
-    const startRes = await app.request('/session/start', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        sessionId: testSessionId,
-        project: 'test-project',
-        projectPath: '/test/path',
-        startTime: new Date().toISOString(),
-      }),
-    });
+    // Start a session
+    const session = startSession(testSessionId, 'test-project', '/test/path');
 
-    expect(startRes.status).toBe(200);
-    const startData = await startRes.json();
-    expect(startData.success).toBe(true);
-    expect(startData.sessionId).toBe(testSessionId);
+    expect(session).not.toBeNull();
+    expect(session.id).toBe(testSessionId);
+    expect(session.project).toBe('test-project');
+    expect(session.status).toBe('active');
 
-    // Try to summarize (will not have AI but endpoint should work)
-    const summarizeRes = await app.request('/session/summarize', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sessionId: testSessionId }),
-    });
+    // Verify session can be read by ID
+    const currentSession = readSession(testSessionId);
+    expect(currentSession).not.toBeNull();
+    expect(currentSession?.id).toBe(testSessionId);
 
-    expect(summarizeRes.status).toBe(200);
+    // End the session by ID
+    const endedSession = endSession(testSessionId, 'end');
+    expect(endedSession).not.toBeNull();
+    expect(endedSession?.status).toBe('completed');
   });
 
   test('decision notes are persisted with correct structure', async () => {
@@ -266,52 +270,6 @@ This decision was made during session \`abc12345\` on 2024-01-15.
   });
 });
 
-describe('Decision Extraction Response Format', () => {
-  test('summarize endpoint returns decisions array', async () => {
-    // Create temp setup
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'decision-resp-test-'));
-    const vaultPath = path.join(tempDir, 'vault');
-    fs.mkdirSync(path.join(vaultPath, '_claude-mem'), { recursive: true });
-
-    const config = createTestConfig(vaultPath);
-    const app = createServer(config);
-
-    const testSessionId = 'test-session-resp-' + Date.now();
-
-    // Start a session
-    const startRes = await app.request('/session/start', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        sessionId: testSessionId,
-        project: 'test-project',
-        projectPath: '/test',
-        startTime: new Date().toISOString(),
-      }),
-    });
-
-    expect(startRes.status).toBe(200);
-
-    // Summarize the session
-    const summarizeRes = await app.request('/session/summarize', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sessionId: testSessionId }),
-    });
-
-    const data = await summarizeRes.json();
-
-    // Response should include decisions array and count
-    expect(data).toHaveProperty('decisions');
-    expect(data).toHaveProperty('decisionsCount');
-    expect(Array.isArray(data.decisions)).toBe(true);
-    expect(typeof data.decisionsCount).toBe('number');
-
-    // Clean up
-    fs.rmSync(tempDir, { recursive: true, force: true });
-  });
-});
-
 describe('Config.capture.decisions Flag', () => {
   test('decisions config flag exists in type', () => {
     // Verify the type includes decisions flag
@@ -327,48 +285,290 @@ describe('Config.capture.decisions Flag', () => {
 
     expect(config.capture?.decisions).toBe(false);
   });
+});
 
-  test('decisions are not extracted when disabled', async () => {
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'decision-disabled-test-'));
-    const vaultPath = path.join(tempDir, 'vault');
-    fs.mkdirSync(path.join(vaultPath, '_claude-mem'), { recursive: true });
+describe('Session Store File-Based Operations', () => {
+  beforeEach(() => {
+    const sessionsDir = getSessionsDir();
+    if (fs.existsSync(sessionsDir)) {
+      fs.rmSync(sessionsDir, { recursive: true, force: true });
+    }
+  });
 
-    // Config with decisions disabled
-    const config = createTestConfig(vaultPath, {
-      capture: { decisions: false } as Config['capture'],
+  afterEach(() => {
+    const sessionsDir = getSessionsDir();
+    if (fs.existsSync(sessionsDir)) {
+      fs.rmSync(sessionsDir, { recursive: true, force: true });
+    }
+  });
+
+  test('session file is created when session starts', () => {
+    const testSessionId = 'file-test-' + Date.now();
+    startSession(testSessionId, 'test-project', '/test/path');
+
+    const sessionPath = getSessionFilePath(testSessionId);
+    expect(fs.existsSync(sessionPath)).toBe(true);
+  });
+
+  test('session file is removed when cleared', () => {
+    const testSessionId = 'clear-test-' + Date.now();
+    startSession(testSessionId, 'test-project', '/test/path');
+
+    const sessionPath = getSessionFilePath(testSessionId);
+    expect(fs.existsSync(sessionPath)).toBe(true);
+
+    clearSessionFile(testSessionId);
+    expect(fs.existsSync(sessionPath)).toBe(false);
+  });
+
+  test('reading non-existent session returns null', () => {
+    const session = readSession('nonexistent-session-id');
+    expect(session).toBeNull();
+  });
+
+  test('multiple concurrent sessions are supported', () => {
+    const firstSessionId = 'first-' + Date.now();
+    const secondSessionId = 'second-' + Date.now();
+
+    // Start first session
+    startSession(firstSessionId, 'project-1', '/path/1');
+
+    // Start second session - should NOT end the first
+    startSession(secondSessionId, 'project-2', '/path/2');
+
+    // Both sessions should be active
+    const first = readSession(firstSessionId);
+    const second = readSession(secondSessionId);
+
+    expect(first?.id).toBe(firstSessionId);
+    expect(first?.status).toBe('active');
+    expect(second?.id).toBe(secondSessionId);
+    expect(second?.status).toBe('active');
+
+    // List should show both
+    const activeSessions = listActiveSessions();
+    expect(activeSessions.length).toBe(2);
+  });
+
+  test('addObservation targets correct session', () => {
+    const sessionId1 = 'obs-test-1-' + Date.now();
+    const sessionId2 = 'obs-test-2-' + Date.now();
+
+    startSession(sessionId1, 'project-1', '/path/1');
+    startSession(sessionId2, 'project-2', '/path/2');
+
+    // Add observation to session 1
+    addObservation(sessionId1, {
+      id: 'obs-1',
+      timestamp: new Date().toISOString(),
+      type: 'command',
+      tool: 'Bash',
+      isError: false,
+      data: { command: 'echo test', exitCode: 0 },
     });
 
-    const app = createServer(config);
+    // Session 1 should have the observation
+    const session1 = readSession(sessionId1);
+    expect(session1?.observations.length).toBe(1);
+    expect(session1?.commandsRun).toBe(1);
 
-    const testSessionId = 'test-session-disabled-' + Date.now();
+    // Session 2 should not have any observations
+    const session2 = readSession(sessionId2);
+    expect(session2?.observations.length).toBe(0);
+    expect(session2?.commandsRun).toBe(0);
+  });
 
-    // Start and summarize a session
-    const startRes = await app.request('/session/start', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        sessionId: testSessionId,
-        project: 'test-project',
-        projectPath: '/test',
-        startTime: new Date().toISOString(),
-      }),
+  test('endSession targets correct session', () => {
+    const sessionId1 = 'end-test-1-' + Date.now();
+    const sessionId2 = 'end-test-2-' + Date.now();
+
+    startSession(sessionId1, 'project-1', '/path/1');
+    startSession(sessionId2, 'project-2', '/path/2');
+
+    // End only session 1
+    endSession(sessionId1, 'end');
+
+    // Session 1 should be completed
+    const session1 = readSession(sessionId1);
+    expect(session1?.status).toBe('completed');
+
+    // Session 2 should still be active
+    const session2 = readSession(sessionId2);
+    expect(session2?.status).toBe('active');
+  });
+
+  test('session ID uses hash to prevent collisions', () => {
+    // These would collide with simple sanitization
+    const id1 = 'a/b';
+    const id2 = 'a_b';
+
+    const path1 = getSessionFilePath(id1);
+    const path2 = getSessionFilePath(id2);
+
+    // Different IDs should get different file paths
+    expect(path1).not.toBe(path2);
+
+    // Neither should contain path traversal
+    expect(path1).not.toContain('..');
+    expect(path2).not.toContain('..');
+  });
+
+  test('session ID sanitization prevents path traversal', () => {
+    const maliciousId = '../../../etc/passwd';
+    const sessionPath = getSessionFilePath(maliciousId);
+
+    // Should not contain path traversal
+    expect(sessionPath).not.toContain('..');
+  });
+
+  test('concurrent observations are not lost (append-only)', async () => {
+    const sessionId = 'concurrent-test-' + Date.now();
+    startSession(sessionId, 'test-project', '/test/path');
+
+    // Simulate concurrent writes
+    const promises: Promise<void>[] = [];
+    const observationCount = 20;
+
+    for (let i = 0; i < observationCount; i++) {
+      promises.push(
+        new Promise((resolve) => {
+          // Small random delay to interleave writes
+          setTimeout(() => {
+            addObservation(sessionId, {
+              id: `obs-${i}`,
+              timestamp: new Date().toISOString(),
+              type: 'command',
+              tool: 'Bash',
+              isError: false,
+              data: { command: `echo ${i}`, exitCode: 0 },
+            });
+            resolve();
+          }, Math.random() * 10);
+        })
+      );
+    }
+
+    await Promise.all(promises);
+
+    // All observations should be present
+    const session = readSession(sessionId);
+    expect(session?.observations.length).toBe(observationCount);
+    expect(session?.commandsRun).toBe(observationCount);
+  });
+
+  test('observations are stored in separate JSONL file', () => {
+    const sessionId = 'jsonl-test-' + Date.now();
+    startSession(sessionId, 'test-project', '/test/path');
+
+    addObservation(sessionId, {
+      id: 'obs-1',
+      timestamp: new Date().toISOString(),
+      type: 'file_edit',
+      tool: 'Edit',
+      isError: false,
+      data: { path: '/test/file.ts', changeType: 'modify' },
     });
 
-    expect(startRes.status).toBe(200);
+    // Session file should exist
+    const sessionPath = getSessionFilePath(sessionId);
+    expect(fs.existsSync(sessionPath)).toBe(true);
 
-    const summarizeRes = await app.request('/session/summarize', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sessionId: testSessionId }),
+    // Observations file should also exist (ends with .observations.jsonl)
+    const obsPath = sessionPath.replace('.json', '.observations.jsonl');
+    expect(fs.existsSync(obsPath)).toBe(true);
+
+    // Observations file should contain the observation as JSONL
+    const content = fs.readFileSync(obsPath, 'utf-8');
+    const lines = content.trim().split('\n');
+    expect(lines.length).toBe(1);
+
+    const obs = JSON.parse(lines[0]);
+    expect(obs.id).toBe('obs-1');
+    expect(obs.type).toBe('file_edit');
+  });
+
+  test('malformed JSONL lines are skipped without losing other observations', () => {
+    const sessionId = 'malformed-test-' + Date.now();
+    startSession(sessionId, 'test-project', '/test/path');
+
+    // Add a valid observation
+    addObservation(sessionId, {
+      id: 'obs-1',
+      timestamp: new Date().toISOString(),
+      type: 'command',
+      tool: 'Bash',
+      isError: false,
+      data: { command: 'echo 1', exitCode: 0 },
     });
 
-    const data = await summarizeRes.json();
+    // Manually corrupt the JSONL file by adding a malformed line
+    const sessionPath = getSessionFilePath(sessionId);
+    const obsPath = sessionPath.replace('.json', '.observations.jsonl');
+    fs.appendFileSync(obsPath, 'this is not valid JSON\n');
+    fs.appendFileSync(obsPath, '{"partial": true\n'); // Incomplete JSON
 
-    // Decisions should be empty when disabled
-    expect(data.decisions).toEqual([]);
-    expect(data.decisionsCount).toBe(0);
+    // Add another valid observation
+    addObservation(sessionId, {
+      id: 'obs-2',
+      timestamp: new Date().toISOString(),
+      type: 'command',
+      tool: 'Bash',
+      isError: false,
+      data: { command: 'echo 2', exitCode: 0 },
+    });
 
-    // Clean up
-    fs.rmSync(tempDir, { recursive: true, force: true });
+    // Read session - should have both valid observations, skip malformed
+    const session = readSession(sessionId);
+    expect(session?.observations.length).toBe(2);
+    expect(session?.observations[0].id).toBe('obs-1');
+    expect(session?.observations[1].id).toBe('obs-2');
+  });
+
+  test('stale session cleanup considers observations file mtime', async () => {
+    const sessionId = 'stale-obs-test-' + Date.now();
+    startSession(sessionId, 'test-project', '/test/path');
+
+    // Add an observation (this updates the observations file mtime)
+    addObservation(sessionId, {
+      id: 'obs-1',
+      timestamp: new Date().toISOString(),
+      type: 'command',
+      tool: 'Bash',
+      isError: false,
+      data: { command: 'echo test', exitCode: 0 },
+    });
+
+    // Manually backdate the metadata file to look stale
+    const sessionPath = getSessionFilePath(sessionId);
+    const oldTime = new Date(Date.now() - 25 * 60 * 60 * 1000); // 25 hours ago
+    fs.utimesSync(sessionPath, oldTime, oldTime);
+
+    // Session should NOT be cleaned up because observations file is recent
+    const { cleanupStaleSessions } = await import('../src/shared/session-store.js');
+    const stale = cleanupStaleSessions(24);
+
+    // Session should still exist (not cleaned up)
+    const session = readSession(sessionId);
+    expect(session).not.toBeNull();
+    expect(stale.length).toBe(0);
+  });
+
+  test('lock file is cleaned up after observation write', () => {
+    const sessionId = 'lock-test-' + Date.now();
+    startSession(sessionId, 'test-project', '/test/path');
+
+    addObservation(sessionId, {
+      id: 'obs-1',
+      timestamp: new Date().toISOString(),
+      type: 'command',
+      tool: 'Bash',
+      isError: false,
+      data: { command: 'echo test', exitCode: 0 },
+    });
+
+    // Lock file should not exist after write completes
+    const sessionPath = getSessionFilePath(sessionId);
+    const lockPath = sessionPath.replace('.json', '.lock');
+    expect(fs.existsSync(lockPath)).toBe(false);
   });
 });

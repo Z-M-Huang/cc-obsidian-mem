@@ -51,10 +51,6 @@ async function main() {
     }
   }
 
-  // Ask about worker port
-  const workerPort = await ask('Worker service port [37781]: ');
-  config.worker.port = parseInt(workerPort) || 37781;
-
   // Save configuration
   console.log('\nSaving configuration...');
   const configDir = getConfigDir();
