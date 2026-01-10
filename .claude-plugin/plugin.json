@@ -1,0 +1,20 @@
+{
+  "name": "cc-obsidian-mem",
+  "version": "0.1.0",
+  "description": "Obsidian-based persistent memory system for Claude Code. Automatically captures session activity, errors, decisions, and patterns into a browsable, visualizable knowledge base.",
+  "author": {
+    "name": "Mark Huang",
+    "url": "https://github.com/Z-M-Huang"
+  },
+  "repository": "https://github.com/Z-M-Huang/cc-obsidian-mem",
+  "license": "MIT",
+  "keywords": [
+    "memory",
+    "obsidian",
+    "knowledge-base",
+    "context",
+    "persistence"
+  ],
+  "hooks": "../hooks/hooks.json",
+  "mcpServers": "../.mcp.json"
+}
