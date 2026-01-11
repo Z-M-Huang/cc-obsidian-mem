@@ -906,6 +906,52 @@ ${keyPointsSection}${sourceSection}
       .map(d => d.name);
   }
 
+  /**
+   * Get all notes for a project
+   * Used for canvas generation and bulk operations
+   */
+  async getProjectNotes(projectName: string): Promise<Note[]> {
+    const projectPath = path.join(
+      this.getMemPath(),
+      PROJECTS_FOLDER,
+      sanitizeProjectName(projectName)
+    );
+
+    if (!fs.existsSync(projectPath)) {
+      return [];
+    }
+
+    const notes: Note[] = [];
+    const files = this.walkDir(projectPath, '.md');
+
+    for (const file of files) {
+      try {
+        const raw = fs.readFileSync(file, 'utf-8');
+        const { frontmatter, content } = parseFrontmatter(raw);
+
+        // Skip index files (category indexes and project base)
+        if (frontmatter.tags?.includes('index')) {
+          continue;
+        }
+
+        // Normalize path separators to forward slashes for cross-platform compatibility
+        // Obsidian expects forward slashes in canvas file paths
+        const relativePath = path.relative(this.vaultPath, file).split(path.sep).join('/');
+
+        notes.push({
+          path: relativePath,
+          frontmatter,
+          content,
+          title: frontmatter.title || this.extractTitleFromContent(content) || path.basename(file, '.md'),
+        });
+      } catch {
+        // Skip files that can't be parsed
+      }
+    }
+
+    return notes;
+  }
+
   // Helper methods
 
   private resolvePath(notePath: string): string {

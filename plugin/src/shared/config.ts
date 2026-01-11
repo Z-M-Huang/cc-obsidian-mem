@@ -30,6 +30,11 @@ const DEFAULT_CONFIG: Config = {
     includeRelatedErrors: true,
     includeProjectPatterns: true,
   },
+  canvas: {
+    enabled: false,       // OFF by default - explicit opt-in required
+    autoGenerate: false,  // Don't auto-generate on mem_project_context
+    updateStrategy: 'skip', // Don't overwrite existing canvases
+  },
 };
 
 let cachedConfig: Config | null = null;
@@ -142,6 +147,9 @@ function deepMerge(target: Config, source: Partial<Config>): Config {
   }
   if (source.contextInjection) {
     result.contextInjection = { ...result.contextInjection, ...source.contextInjection };
+  }
+  if (source.canvas) {
+    result.canvas = { ...result.canvas, ...source.canvas };
   }
 
   return result;
