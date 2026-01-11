@@ -74,6 +74,9 @@ When releasing a new version, update the version number in **all three files**:
 
 ```
 cc-obsidian-mem/
+├── .claude/                  # Claude Code configuration
+│   ├── settings.local.json   # Permission config, hooks, status line
+│   └── scripts/              # Helper scripts (statusline, validation)
 ├── .claude-plugin/
 │   └── marketplace.json      # Marketplace metadata (version here!)
 ├── plugin/                   # The actual plugin
@@ -84,12 +87,20 @@ cc-obsidian-mem/
 │   │   ├── hooks.json        # Hook definitions
 │   │   └── scripts/          # Hook implementations
 │   ├── scripts/              # Utility scripts (backfill, migrations)
+│   ├── skills/               # Claude Code skills
+│   │   ├── development-guidelines/
+│   │   ├── mem-save/
+│   │   ├── mem-search/
+│   │   ├── mem-status/
+│   │   └── testing-process/
 │   ├── src/
 │   │   ├── cli/              # Setup CLI
 │   │   ├── mcp-server/       # MCP server for mem_* tools
 │   │   ├── services/         # Summarization & knowledge extraction
 │   │   └── shared/           # Shared types, config, session store
 │   └── tests/
+├── .yamllint.yml             # YAML linting config
+├── .yamlfmt.yaml             # YAML formatting config
 └── CLAUDE.md                 # This file
 ```
 
@@ -126,6 +137,15 @@ cc-obsidian-mem/
 
 #### Utility Scripts
 - `plugin/scripts/backfill-parent-links.ts` - Backfill parent links and create category indexes for existing notes
+
+#### Claude Code Configuration
+- `.claude/settings.local.json` - Permissions, hooks, and status line config
+- `.claude/scripts/statusline.sh` - Shows model and context usage percentage
+- `.claude/scripts/validate-bash.sh` - Pre-tool validation for bash commands
+
+#### Skills
+- `plugin/skills/testing-process/` - Testing guidelines for TypeScript/Bun
+- `plugin/skills/development-guidelines/` - Development best practices
 
 ### Testing
 
@@ -191,3 +211,28 @@ Individual Notes (decisions/2026-01-10_some-decision.md)
 - **Category indexes** use the folder name as filename: `decisions/decisions.md`, NOT `_index.md`
 - **Parent links** in frontmatter: `parent: "[[_claude-mem/projects/project-name/category/category]]"`
 - **Superseding notes** creates bidirectional links: old note gets `superseded_by`, new note gets `supersedes`
+
+### Available Skills
+
+Use these skills during development:
+
+| Skill | Description |
+|-------|-------------|
+| `testing-process` | Guidelines for testing TypeScript/Bun code |
+| `development-guidelines` | Best practices for cc-obsidian-mem development |
+| `mem-save` | Save to memory system |
+| `mem-search` | Search memory system |
+| `mem-status` | Check memory system status |
+
+### Claude Code Status Line
+
+The `.claude/settings.local.json` configures a custom status line showing:
+- Current model name
+- Context window usage percentage
+
+### Bash Validation Hook
+
+The pre-tool-use hook validates Bash commands and blocks access to:
+- Environment files (`.env`, credentials)
+- Build artifacts (`node_modules`, `dist`, `coverage`)
+- Log files and sensitive data

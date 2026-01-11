@@ -4,6 +4,8 @@ bun.lockb
 
 # Build output
 dist/
+build/
+out/
 
 # Review folder (per global guidelines)
 review/
@@ -18,6 +20,10 @@ review/
 .vscode/
 *.swp
 *.swo
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
 
 # OS
 .DS_Store
@@ -25,6 +31,7 @@ Thumbs.db
 
 # Logs
 *.log
+*.log.*
 logs/
 
 # Test coverage
@@ -34,3 +41,30 @@ coverage/
 tmp/
 temp/
 *.tmp
+
+# Python
+*.pyc
+__pycache__/
+venv/
+.venv/
+
+# Generated reports (prevent context pollution)
+consensus*.md
+review*.md
+
+# Docker
+.docker/
+
+# Terraform/Ansible
+.terraform/
+.ansible/
+
+# Data files
+data/
+*.csv
+
+# Secrets (safety net)
+*.pem
+*.key
+service-account-key.json
+credentials.json
