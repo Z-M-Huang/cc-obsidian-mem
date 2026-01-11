@@ -294,6 +294,153 @@ async function main() {
     }
   );
 
+  // ===== TechKB Tools =====
+
+  // Tool: mem_techkb_categories - List available TechKB categories
+  server.registerTool(
+    'mem_techkb_categories',
+    {
+      title: 'List TechKB Categories',
+      description: 'List all available TechKB categories for organizing knowledge. TechKB uses a Johnny Decimal structure for categorizing infrastructure, troubleshooting, reference, and project documentation.',
+      inputSchema: {},
+    },
+    async (): Promise<ToolResult> => {
+      try {
+        if (!vault.isTechKBEnabled()) {
+          return {
+            content: [{
+              type: 'text',
+              text: 'TechKB integration is not enabled.\n\nTo enable, add to your config.json:\n```json\n{\n  "techkb": {\n    "enabled": true,\n    "basePath": "TechKB",\n    "projectFolder": "10-projects"\n  }\n}\n```'
+            }],
+          };
+        }
+
+        const categories = vault.getTechKBCategories();
+
+        if (categories.length === 0) {
+          return {
+            content: [{ type: 'text', text: 'No TechKB categories configured.' }],
+          };
+        }
+
+        const lines = ['## TechKB Categories\n'];
+        for (const cat of categories) {
+          lines.push(`### ${cat.name} (\`${cat.id}\`)`);
+          lines.push(`**Path**: \`${cat.path}\``);
+          if (cat.description) {
+            lines.push(`${cat.description}`);
+          }
+          lines.push('');
+        }
+
+        return {
+          content: [{ type: 'text', text: lines.join('\n') }],
+        };
+      } catch (error) {
+        return {
+          content: [{ type: 'text', text: `Failed to list categories: ${error}` }],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  // Tool: mem_techkb_write - Write a note to TechKB
+  server.registerTool(
+    'mem_techkb_write',
+    {
+      title: 'Write to TechKB',
+      description: 'Write a note to a TechKB category. Use for documenting infrastructure, hardware specs, troubleshooting guides, and reference material that belongs in the TechKB structure rather than project-specific memory.',
+      inputSchema: {
+        category: z.string().describe('TechKB category key (e.g., "infrastructure", "hardware", "troubleshooting") or path relative to TechKB base (e.g., "30-infrastructure/networking")'),
+        title: z.string().describe('Title for the note'),
+        content: z.string().describe('Markdown content for the note (without the title heading - it will be added automatically)'),
+        tags: z.array(z.string()).optional().describe('Additional tags (techkb tags are added automatically)'),
+        filename: z.string().optional().describe('Custom filename without .md extension (auto-generated from title if not provided)'),
+        append: z.boolean().optional().describe('Append to existing note instead of creating new'),
+        metadata: z.record(z.unknown()).optional().describe('Additional frontmatter fields'),
+      },
+    },
+    async ({ category, title, content, tags, filename, append, metadata }): Promise<ToolResult> => {
+      try {
+        if (!vault.isTechKBEnabled()) {
+          return {
+            content: [{
+              type: 'text',
+              text: 'TechKB integration is not enabled. Enable it in config.json with techkb.enabled: true'
+            }],
+            isError: true,
+          };
+        }
+
+        const result = await vault.writeTechKBNote({
+          category,
+          title,
+          content,
+          tags,
+          filename,
+          append,
+          metadata,
+        });
+
+        const action = result.created ? 'Created' : 'Updated';
+        return {
+          content: [{ type: 'text', text: `${action} TechKB note: ${result.path}` }],
+        };
+      } catch (error) {
+        return {
+          content: [{ type: 'text', text: `Failed to write TechKB note: ${error}` }],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  // Tool: mem_techkb_search - Search TechKB notes
+  server.registerTool(
+    'mem_techkb_search',
+    {
+      title: 'Search TechKB',
+      description: 'Search TechKB notes across all categories or within a specific category. Use for finding infrastructure docs, hardware specs, troubleshooting guides, and reference material.',
+      inputSchema: {
+        query: z.string().describe('Search query - natural language or keywords'),
+        category: z.string().optional().describe('Filter by category key or path (e.g., "infrastructure", "80-reference/hardware")'),
+        limit: z.number().default(10).describe('Maximum number of results'),
+      },
+    },
+    async ({ query, category, limit }): Promise<ToolResult> => {
+      try {
+        if (!vault.isTechKBEnabled()) {
+          return {
+            content: [{
+              type: 'text',
+              text: 'TechKB integration is not enabled. Enable it in config.json with techkb.enabled: true'
+            }],
+            isError: true,
+          };
+        }
+
+        const results = await vault.searchTechKB(query, { category, limit });
+
+        if (results.length === 0) {
+          return {
+            content: [{ type: 'text', text: 'No TechKB notes found matching your query.' }],
+          };
+        }
+
+        const output = formatSearchResults(results);
+        return {
+          content: [{ type: 'text', text: output }],
+        };
+      } catch (error) {
+        return {
+          content: [{ type: 'text', text: `TechKB search failed: ${error}` }],
+          isError: true,
+        };
+      }
+    }
+  );
+
   // Connect via stdio
   const transport = new StdioServerTransport();
   await server.connect(transport);

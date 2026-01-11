@@ -20,6 +20,14 @@ You have access to a persistent memory system via MCP tools. Use it proactively.
 | `mem_project_context` | Starting work on a project (get recent context) |
 | `mem_list_projects` | Need to see all tracked projects |
 
+### TechKB Tools (if enabled)
+
+| Tool | Use When |
+|------|----------|
+| `mem_techkb_categories` | List available TechKB categories |
+| `mem_techkb_write` | Save infrastructure, hardware, troubleshooting docs |
+| `mem_techkb_search` | Search TechKB knowledge base |
+
 ### When to Search Memory
 
 **Proactively search memory (`mem_search`) when:**
@@ -110,6 +118,11 @@ cc-obsidian-mem/
 - `plugin/docker-compose.yml` - Docker Compose with Traefik labels
 - `plugin/.env.example` - Environment variable template
 - `plugin/docs/HTTP-DEPLOYMENT.md` - Full deployment guide
+
+#### TechKB Integration
+- `plugin/src/shared/config.ts` - TechKB configuration and helpers
+- `plugin/src/mcp-server/utils/vault.ts` - TechKB write/search methods
+- `plugin/docs/TECHKB-INTEGRATION.md` - TechKB setup and usage guide
 
 #### Utility Scripts
 - `plugin/scripts/backfill-parent-links.ts` - Backfill parent links and create category indexes for existing notes

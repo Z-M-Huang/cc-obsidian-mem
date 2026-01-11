@@ -30,6 +30,55 @@ export interface Config {
     includeRelatedErrors: boolean;
     includeProjectPatterns: boolean;
   };
+  /**
+   * TechKB integration settings
+   * Enables writing to a Johnny Decimal-style knowledge base structure
+   */
+  techkb?: TechKBConfig;
+}
+
+/**
+ * TechKB integration configuration
+ * Allows cc-obsidian-mem to write to a Johnny Decimal-style vault structure
+ */
+export interface TechKBConfig {
+  /** Enable TechKB integration */
+  enabled: boolean;
+  /**
+   * Base path to TechKB folder relative to vault root
+   * e.g., "TechKB" for vault/TechKB/
+   */
+  basePath: string;
+  /**
+   * Project folder within TechKB (where _claude-mem project folders go)
+   * e.g., "10-projects" for vault/TechKB/10-projects/{project}/_claude-mem/
+   */
+  projectFolder: string;
+  /**
+   * Category mapping from content types to TechKB paths
+   * Keys are category names, values are paths relative to TechKB basePath
+   * e.g., { "infrastructure": "30-infrastructure", "hardware": "80-reference/hardware" }
+   */
+  categoryMapping: Record<string, string>;
+  /**
+   * Default frontmatter fields to add to TechKB notes
+   * These will be merged with note-specific frontmatter
+   */
+  defaultFrontmatter?: Record<string, unknown>;
+}
+
+/**
+ * TechKB category definition for use in tools
+ */
+export interface TechKBCategory {
+  /** Category identifier (key in categoryMapping) */
+  id: string;
+  /** Human-readable name */
+  name: string;
+  /** Path relative to TechKB basePath */
+  path: string;
+  /** Description of what belongs in this category */
+  description?: string;
 }
 
 /**

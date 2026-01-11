@@ -1,9 +1,40 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { parseFrontmatter, stringifyFrontmatter, generateFrontmatter, mergeFrontmatter } from './frontmatter.js';
-import type { Note, NoteFrontmatter, WriteNoteInput, NoteType, SearchResult, ProjectContext } from '../../shared/types.js';
-import { loadConfig, getMemFolderPath, getProjectPath, sanitizeProjectName } from '../../shared/config.js';
+import type { Note, NoteFrontmatter, WriteNoteInput, NoteType, SearchResult, ProjectContext, TechKBCategory } from '../../shared/types.js';
+import {
+  loadConfig,
+  getMemFolderPath,
+  getProjectPath,
+  sanitizeProjectName,
+  isTechKBEnabled,
+  getTechKBBasePath,
+  getTechKBCategoryPath,
+  getTechKBProjectPath,
+  getTechKBCategories,
+  resolveTechKBPath,
+} from '../../shared/config.js';
 import { PROJECTS_FOLDER, GLOBAL_FOLDER, TEMPLATES_FOLDER } from '../../shared/constants.js';
+
+/**
+ * Input for writing a TechKB note
+ */
+export interface WriteTechKBNoteInput {
+  /** Category key or path relative to TechKB base */
+  category: string;
+  /** Note title */
+  title: string;
+  /** Note content (markdown) */
+  content: string;
+  /** Optional tags */
+  tags?: string[];
+  /** Optional custom frontmatter fields */
+  metadata?: Record<string, unknown>;
+  /** Specific filename (without .md extension) - if not provided, generates from title */
+  filename?: string;
+  /** If true, append to existing note instead of creating new */
+  append?: boolean;
+}
 
 export class VaultManager {
   private vaultPath: string;
@@ -1018,6 +1049,164 @@ ${keyPointsSection}${sourceSection}
     return fs.readdirSync(projectsDir, { withFileTypes: true })
       .filter(d => d.isDirectory())
       .map(d => d.name);
+  }
+
+  // ===== TechKB Methods =====
+
+  /**
+   * Check if TechKB integration is enabled
+   */
+  isTechKBEnabled(): boolean {
+    return isTechKBEnabled();
+  }
+
+  /**
+   * Get available TechKB categories
+   */
+  getTechKBCategories(): TechKBCategory[] {
+    return getTechKBCategories();
+  }
+
+  /**
+   * Write a note to a TechKB category
+   * @throws Error if TechKB is not enabled
+   */
+  async writeTechKBNote(input: WriteTechKBNoteInput): Promise<{ path: string; created: boolean }> {
+    if (!isTechKBEnabled()) {
+      throw new Error('TechKB integration is not enabled. Enable it in config.json with techkb.enabled: true');
+    }
+
+    const config = loadConfig();
+    const categoryPath = resolveTechKBPath(input.category);
+    if (!categoryPath) {
+      throw new Error(`TechKB category not found: ${input.category}`);
+    }
+
+    // Ensure category directory exists
+    if (!fs.existsSync(categoryPath)) {
+      fs.mkdirSync(categoryPath, { recursive: true });
+    }
+
+    // Generate filename
+    const date = new Date().toISOString().split('T')[0];
+    const slug = input.filename || this.slugify(input.title, 'untitled');
+    const filename = `${date}_${slug}.md`;
+    const fullPath = path.join(categoryPath, filename);
+
+    const exists = fs.existsSync(fullPath);
+
+    if (exists && input.append) {
+      // Append to existing note
+      const raw = fs.readFileSync(fullPath, 'utf-8');
+      const { frontmatter, content } = parseFrontmatter(raw);
+      const newContent = content + '\n\n' + input.content;
+      frontmatter.updated = new Date().toISOString();
+      if (input.tags) {
+        frontmatter.tags = [...new Set([...(frontmatter.tags || []), ...input.tags])];
+      }
+      fs.writeFileSync(fullPath, stringifyFrontmatter(frontmatter, newContent));
+    } else {
+      // Create new note
+      const baseTags = ['techkb', `techkb/${input.category.split('/')[0]}`];
+      const allTags = [...baseTags, ...(input.tags || [])];
+
+      // Build frontmatter with TechKB defaults
+      const techkbDefaults = config.techkb?.defaultFrontmatter || {};
+      const frontmatter: NoteFrontmatter = {
+        type: 'learning' as NoteType,
+        title: input.title,
+        created: new Date().toISOString(),
+        updated: new Date().toISOString(),
+        tags: allTags,
+        ...techkbDefaults,
+        ...input.metadata,
+        // TechKB-specific fields
+        techkb_category: input.category,
+      };
+
+      const noteContent = `# ${input.title}\n\n${input.content}`;
+      fs.writeFileSync(fullPath, stringifyFrontmatter(frontmatter, noteContent));
+    }
+
+    // Return path relative to vault root
+    const relativePath = path.relative(this.vaultPath, fullPath);
+    return { path: relativePath, created: !exists };
+  }
+
+  /**
+   * Search TechKB notes across categories
+   */
+  async searchTechKB(
+    query: string,
+    options: {
+      category?: string;
+      limit?: number;
+    } = {}
+  ): Promise<SearchResult[]> {
+    if (!isTechKBEnabled()) {
+      return [];
+    }
+
+    const results: SearchResult[] = [];
+    const limit = options.limit || 10;
+    const basePath = getTechKBBasePath();
+    if (!basePath) return [];
+
+    // Determine search directory
+    let searchDir = basePath;
+    if (options.category) {
+      const categoryPath = resolveTechKBPath(options.category);
+      if (categoryPath && fs.existsSync(categoryPath)) {
+        searchDir = categoryPath;
+      }
+    }
+
+    if (!fs.existsSync(searchDir)) {
+      return [];
+    }
+
+    const files = this.walkDir(searchDir, '.md');
+    const queryLower = query.toLowerCase();
+
+    for (const file of files) {
+      if (results.length >= limit) break;
+
+      try {
+        const raw = fs.readFileSync(file, 'utf-8');
+        const { frontmatter, content } = parseFrontmatter(raw);
+
+        const fullText = (content + ' ' + (frontmatter.title || '')).toLowerCase();
+        if (!fullText.includes(queryLower)) {
+          continue;
+        }
+
+        results.push({
+          id: path.basename(file, '.md'),
+          title: frontmatter.title || path.basename(file, '.md'),
+          type: `techkb/${frontmatter.techkb_category || 'unknown'}`,
+          path: path.relative(this.vaultPath, file),
+          snippet: this.extractSnippet(content, query),
+          score: this.calculateScore(fullText, queryLower),
+          metadata: {
+            date: frontmatter.created,
+            tags: frontmatter.tags,
+          },
+        });
+      } catch {
+        // Skip files that can't be parsed
+      }
+    }
+
+    results.sort((a, b) => b.score - a.score);
+    return results.slice(0, limit);
+  }
+
+  /**
+   * Get the TechKB project path for a project
+   * When TechKB is enabled, projects use TechKB/10-projects/{project}/_claude-mem/
+   */
+  getTechKBProjectMemPath(projectName: string): string | null {
+    return getTechKBProjectPath(projectName);
   }
 
   // Helper methods
