@@ -3,21 +3,21 @@
 
 FROM oven/bun:1-alpine
 
-LABEL org.opencontainers.image.source="https://github.com/Z-M-Huang/cc-obsidian-mem"
+LABEL org.opencontainers.image.source="https://github.com/jodfie/cc-obsidian-mem"
 LABEL org.opencontainers.image.description="Obsidian-based persistent memory MCP server for Claude Code"
 LABEL org.opencontainers.image.licenses="MIT"
 
 # Install curl for health checks
 RUN apk add --no-cache curl
 
-# Create non-root user
-RUN addgroup -g 1000 mcpuser && \
-    adduser -u 1000 -G mcpuser -s /bin/sh -D mcpuser
+# Create non-root user (use different UID to avoid conflicts with existing bun user)
+RUN addgroup -g 1001 mcpuser && \
+    adduser -u 1001 -G mcpuser -s /bin/sh -D mcpuser
 
 WORKDIR /app
 
 # Copy package files
-COPY package.json bun.lockb* ./
+COPY package.json bun.lock* ./
 
 # Install dependencies
 RUN bun install --frozen-lockfile --production
