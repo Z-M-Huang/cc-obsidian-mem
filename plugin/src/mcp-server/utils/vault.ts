@@ -86,7 +86,7 @@ export class VaultManager {
       sanitizeProjectName(projectName)
     );
 
-    const categories = ['sessions', 'errors', 'decisions', 'files', 'knowledge', 'research'];
+    const categories = ['sessions', 'errors', 'decisions', 'patterns', 'files', 'knowledge', 'research'];
     const dirs = [
       projectPath,
       ...categories.map(cat => path.join(projectPath, cat)),
@@ -1260,7 +1260,9 @@ ${keyPointsSection}${sourceSection}
         fallbackSlug = 'untitled-decision';
         break;
       case 'pattern':
-        folder = `${GLOBAL_FOLDER}/patterns`;
+        folder = input.project
+          ? `${PROJECTS_FOLDER}/${sanitizeProjectName(input.project)}/patterns`
+          : `${GLOBAL_FOLDER}/patterns`;
         // Patterns also use slug-only paths
         useDate = false;
         fallbackSlug = 'untitled-pattern';

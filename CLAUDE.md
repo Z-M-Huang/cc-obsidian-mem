@@ -11,14 +11,14 @@ You have access to a persistent memory system via MCP tools. Use it proactively.
 
 ### Available Tools
 
-| Tool | Use When |
-|------|----------|
-| `mem_search` | Looking for past decisions, errors, patterns, or context |
-| `mem_read` | Need full content of a specific note |
-| `mem_write` | Saving important decisions, patterns, or learnings |
-| `mem_supersede` | Updating/replacing outdated information |
-| `mem_project_context` | Starting work on a project (get recent context) |
-| `mem_list_projects` | Need to see all tracked projects |
+| Tool                  | Use When                                                 |
+| --------------------- | -------------------------------------------------------- |
+| `mem_search`          | Looking for past decisions, errors, patterns, or context |
+| `mem_read`            | Need full content of a specific note                     |
+| `mem_write`           | Saving important decisions, patterns, or learnings       |
+| `mem_supersede`       | Updating/replacing outdated information                  |
+| `mem_project_context` | Starting work on a project (get recent context)          |
+| `mem_list_projects`   | Need to see all tracked projects                         |
 
 ### TechKB Tools (if enabled)
 
@@ -31,6 +31,7 @@ You have access to a persistent memory system via MCP tools. Use it proactively.
 ### When to Search Memory
 
 **Proactively search memory (`mem_search`) when:**
+
 - Starting work on a codebase - check for project context and recent decisions
 - Encountering an error - search for similar errors and their solutions
 - Making architectural decisions - look for related past decisions
@@ -38,6 +39,7 @@ You have access to a persistent memory system via MCP tools. Use it proactively.
 - Implementing a feature similar to past work
 
 **Example searches:**
+
 - `mem_search query="authentication" type="decision"` - Find auth-related decisions
 - `mem_search query="TypeError" type="error"` - Find past TypeScript errors
 - `mem_search query="database schema"` - Find DB-related knowledge
@@ -46,12 +48,14 @@ You have access to a persistent memory system via MCP tools. Use it proactively.
 ### When to Save to Memory
 
 **Save to memory (`mem_write`) when:**
+
 - Making significant architectural or technical decisions
 - Discovering important patterns or gotchas
 - Solving tricky bugs (save the solution)
 - Learning something project-specific that will be useful later
 
 **Use `mem_supersede` when:**
+
 - A previous decision is being replaced
 - Updating outdated documentation or patterns
 ```
@@ -64,11 +68,11 @@ You have access to a persistent memory system via MCP tools. Use it proactively.
 
 When releasing a new version, update the version number in **all three files**:
 
-| File | Field | Example |
-|------|-------|---------|
-| `plugin/package.json` | `version` | `"version": "0.3.0"` |
-| `plugin/.claude-plugin/plugin.json` | `version` | `"version": "0.3.0"` |
-| `.claude-plugin/marketplace.json` | `plugins[0].version` | `"version": "0.3.0"` |
+| File                                | Field                | Example              |
+| ----------------------------------- | -------------------- | -------------------- |
+| `plugin/package.json`               | `version`            | `"version": "0.3.1"` |
+| `plugin/.claude-plugin/plugin.json` | `version`            | `"version": "0.3.1"` |
+| `.claude-plugin/marketplace.json`   | `plugins[0].version` | `"version": "0.3.1"` |
 
 ### Project Structure
 
@@ -107,6 +111,7 @@ cc-obsidian-mem/
 ### Key Files by Feature
 
 #### Hook Scripts
+
 - `plugin/hooks/scripts/session-start.ts` - Initialize session, inject context
 - `plugin/hooks/scripts/user-prompt-submit.ts` - Track user prompts
 - `plugin/hooks/scripts/post-tool-use.ts` - Capture tool observations, extract knowledge from WebFetch/WebSearch/Context7
@@ -115,6 +120,7 @@ cc-obsidian-mem/
 - `plugin/hooks/scripts/session-end.ts` - Finalize session, generate summaries
 
 #### Configuration
+
 - `plugin/src/shared/config.ts` - Config loading and defaults
 - `plugin/src/shared/types.ts` - TypeScript type definitions
 - User config: `~/.cc-obsidian-mem/config.json`
@@ -122,6 +128,8 @@ cc-obsidian-mem/
 #### MCP Server
 - `plugin/src/mcp-server/index.ts` - MCP server entry point (stdio transport for local use)
 - `plugin/src/mcp-server/http-server.ts` - HTTP/SSE server (for remote/Docker deployment)
+
+- `plugin/src/mcp-server/index.ts` - MCP server entry point, registers all `mem_*` tools
 - `plugin/src/mcp-server/utils/vault.ts` - Vault read/write operations, note linking, superseding
 
 #### HTTP/SSE Deployment
@@ -136,6 +144,7 @@ cc-obsidian-mem/
 - `plugin/docs/TECHKB-INTEGRATION.md` - TechKB setup and usage guide
 
 #### Utility Scripts
+
 - `plugin/scripts/backfill-parent-links.ts` - Backfill parent links and create category indexes for existing notes
 
 #### Claude Code Configuration
