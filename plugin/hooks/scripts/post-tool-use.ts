@@ -11,7 +11,6 @@ import {
   extractErrorInfo,
   readStdinJson,
 } from './utils/helpers.js';
-import { readPendingFile, formatPendingForInjection, clearPending } from './utils/pending.js';
 import type { PostToolUseInput, Observation, ErrorData } from '../../src/shared/types.js';
 import { extractToolKnowledge } from '../../src/services/knowledge-extractor.js';
 import { sanitizeProjectName } from '../../src/shared/config.js';
@@ -23,19 +22,6 @@ async function main() {
   try {
     const input = await readStdinJson<PostToolUseInput>();
     const config = loadConfig();
-
-    // Check for pending knowledge items from background summarization
-    if (input.session_id) {
-      const pendingFile = readPendingFile(input.session_id);
-      // Defensive: ensure items is a valid array before accessing .length
-      const items = pendingFile && Array.isArray(pendingFile.items) ? pendingFile.items : [];
-      if (items.length > 0) {
-        // Inject pending items into conversation for Claude to write via MCP
-        console.log(formatPendingForInjection(items, pendingFile?.project_hint));
-        // Clear after injection so it's not repeated
-        clearPending(input.session_id);
-      }
-    }
 
     // Validate session_id from input
     if (!input.session_id) {

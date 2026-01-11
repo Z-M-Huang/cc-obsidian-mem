@@ -9,8 +9,7 @@
  * Key design:
  * - Spawned by hooks with `detached: true` and `.unref()`
  * - Uses `claude -p` CLI (not Agent SDK) to avoid deadlock
- * - Writes extracted knowledge to pending file (NOT vault)
- * - Frontend (MCP tools) handles vault writes with correct project
+ * - Writes extracted knowledge directly to the Obsidian vault
  */
 
 import * as fs from 'fs';
@@ -20,7 +19,7 @@ import { spawn } from 'child_process';
 import { loadConfig } from '../../src/shared/config.js';
 import { parseTranscript, extractQAPairs, extractWebResearch } from '../../src/services/transcript.js';
 import { markBackgroundJobCompleted } from '../../src/shared/session-store.js';
-import { writePending, type PendingItem } from './utils/pending.js';
+import { VaultManager } from '../../src/mcp-server/utils/vault.js';
 
 interface SummarizeInput {
   transcript_path: string;
@@ -117,19 +116,66 @@ async function main() {
 
     log(`AI extracted ${knowledgeItems.length} knowledge items`);
 
-    // Write to pending file (NOT vault) - frontend will handle vault writes
-    const pendingItems: PendingItem[] = knowledgeItems.map((item) => ({
-      type: item.type,
-      title: item.title,
-      context: item.context,
-      content: item.summary,
-      keyPoints: item.keyPoints,
-      topics: item.topics,
-      sourceSession: input.session_id, // Preserve session provenance
-    }));
+    // Write knowledge directly to vault (skip if no project detected)
+    if (!input.project_hint) {
+      log('WARNING: No project detected, skipping knowledge write to vault');
+    } else {
+      try {
+        const VALID_TYPES = ['qa', 'explanation', 'decision', 'research', 'learning'];
 
-    writePending(input.session_id, pendingItems, input.project_hint);
-    log(`Wrote ${pendingItems.length} items to pending file (project_hint: ${input.project_hint || 'none'})`);
+        // Filter and map valid items (with type guards for malformed AI output)
+        const validItems: Array<{
+          type: 'qa' | 'explanation' | 'decision' | 'research' | 'learning';
+          title: string;
+          context: string;
+          content: string;
+          keyPoints: string[];
+          topics: string[];
+          sourceSession: string;
+        }> = [];
+
+        for (const item of knowledgeItems) {
+          const typeStr = typeof item.type === 'string' ? item.type.trim().toLowerCase() : '';
+          const titleStr = typeof item.title === 'string' ? item.title : '';
+          const summaryStr = typeof item.summary === 'string' ? item.summary : '';
+          const hasRequiredFields = typeStr && titleStr && summaryStr;
+          const hasValidType = VALID_TYPES.includes(typeStr);
+
+          if (!hasRequiredFields || !hasValidType) {
+            log(`Skipping invalid AI item: type=${String(item.type).substring(0, 20)}, title=${String(item.title).substring(0, 30)}`);
+            continue;
+          }
+
+          // Filter arrays to only string items to prevent writeKnowledge failures
+          const keyPoints = Array.isArray(item.keyPoints)
+            ? item.keyPoints.filter((k: unknown) => typeof k === 'string')
+            : [];
+          const topics = Array.isArray(item.topics)
+            ? item.topics.filter((t: unknown) => typeof t === 'string')
+            : [];
+
+          validItems.push({
+            type: typeStr as 'qa' | 'explanation' | 'decision' | 'research' | 'learning',
+            title: titleStr,
+            context: typeof item.context === 'string' ? item.context : '',
+            content: summaryStr,
+            keyPoints,
+            topics,
+            sourceSession: input.session_id,
+          });
+        }
+
+        if (validItems.length === 0) {
+          log('No valid knowledge items to write');
+        } else {
+          const vault = new VaultManager(config.vault.path, config.vault.memFolder);
+          const paths = await vault.writeKnowledgeBatch(validItems, input.project_hint);
+          log(`Wrote ${paths.length}/${validItems.length} knowledge notes to vault`);
+        }
+      } catch (error) {
+        log(`ERROR: Failed to write knowledge to vault: ${error}`);
+      }
+    }
 
     // Mark background job as completed (so session-end doesn't wait)
     if (input.trigger === 'pre-compact') {
