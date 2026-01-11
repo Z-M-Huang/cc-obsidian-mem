@@ -9,13 +9,17 @@
  * - Sessions are ephemeral - no vault persistence
  * - NO background summarization at session-end (no injection path exists)
  * - Cleans up session file and pending items
+ * - Generates/updates project canvases if enabled
  *
  * Note: Knowledge extraction only happens on /compact (pre-compact hook)
  * where there's a subsequent message for pending injection.
  */
 
-import { loadConfig } from '../../src/shared/config.js';
+import * as path from 'path';
+import { loadConfig, getProjectPath } from '../../src/shared/config.js';
 import { endSession, readSession, clearSessionFile } from '../../src/shared/session-store.js';
+import { VaultManager } from '../../src/mcp-server/utils/vault.js';
+import { generateProjectCanvases, detectFolder, type CanvasNote } from '../../src/mcp-server/utils/canvas.js';
 import { readStdinJson } from './utils/helpers.js';
 import { clearPending } from './utils/pending.js';
 import type { SessionEndInput } from '../../src/shared/types.js';
@@ -44,6 +48,49 @@ async function main() {
     const session = endSession(input.session_id, endType);
     if (!session) {
       return;
+    }
+
+    const config = loadConfig();
+
+    // Generate/update project canvases if enabled
+    if (config.canvas?.enabled) {
+      try {
+        const vault = new VaultManager(config.vault.path, config.vault.memFolder);
+        const notes = await vault.getProjectNotes(session.project);
+
+        if (notes.length > 0) {
+          const canvasNotes: CanvasNote[] = notes.map((note) => ({
+            path: note.path,
+            title: note.title,
+            folder: detectFolder(note.path),
+            status: note.frontmatter.status || 'active',
+            created: note.frontmatter.created,
+          }));
+
+          const projectPath = getProjectPath(session.project, config);
+          const canvasDir = path.join(projectPath, 'canvases');
+          const updateStrategy = config.canvas.updateStrategy || 'skip';
+
+          const result = generateProjectCanvases(
+            session.project,
+            canvasNotes,
+            canvasDir,
+            updateStrategy,
+            false // don't force
+          );
+
+          const generated: string[] = [];
+          if (result.dashboard) generated.push('dashboard');
+          if (result.timeline) generated.push('timeline');
+          if (result.graph) generated.push('graph');
+
+          if (generated.length > 0) {
+            console.error(`[cc-obsidian-mem] Updated ${generated.length} canvas(es): ${generated.join(', ')}`);
+          }
+        }
+      } catch (canvasError) {
+        console.error(`[cc-obsidian-mem] Canvas generation failed: ${canvasError}`);
+      }
     }
 
     // Note: We intentionally do NOT spawn background summarization here.

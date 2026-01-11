@@ -7,6 +7,7 @@ Obsidian-based persistent memory system for Claude Code. Automatically captures 
 - **Automatic Capture**: Hooks automatically track file edits, commands, and errors
 - **AI Summaries**: Claude-powered knowledge extraction from conversations
 - **Obsidian Integration**: Full Obsidian syntax support with Dataview queries for visualization
+- **Canvas Visualizations**: Auto-generated dashboard, timeline, and graph canvases
 - **Project Organization**: Memories organized by project with cross-project patterns
 - **MCP Tools**: Search, read, and write memories directly from Claude Code
 - **Skills**: User-invokable commands (`/mem-search`, `/mem-save`, `/mem-status`)
@@ -79,6 +80,11 @@ The wizard will prompt you for your Obsidian vault path and create the config fi
     "maxTokens": 4000,
     "includeRelatedErrors": true,
     "includeProjectPatterns": true
+  },
+  "canvas": {
+    "enabled": true,
+    "autoGenerate": true,
+    "updateStrategy": "always"
   }
 }
 ```
@@ -108,6 +114,7 @@ You have access to a persistent memory system via MCP tools. Use it proactively.
 | `mem_supersede` | Updating/replacing outdated information |
 | `mem_project_context` | Starting work on a project (get recent context) |
 | `mem_list_projects` | Need to see all tracked projects |
+| `mem_generate_canvas` | Generate Obsidian canvas visualizations |
 
 ### When to Search Memory
 
@@ -184,6 +191,7 @@ These tools are available to Claude during conversations:
 | `mem_supersede` | Create a new note that supersedes an existing one (bidirectional links) |
 | `mem_project_context` | Get context for a project |
 | `mem_list_projects` | List all tracked projects |
+| `mem_generate_canvas` | Generate canvas visualizations (dashboard, timeline, graph) |
 
 ---
 
@@ -205,11 +213,11 @@ These tools are available to Claude during conversations:
 
 | Hook | Purpose |
 |------|---------|
-| `SessionStart` | Initialize session tracking, inject project context |
+| `SessionStart` | Initialize session tracking, inject project context, migrate pending files |
 | `UserPromptSubmit` | Track user prompts |
 | `PostToolUse` | Capture observations, extract knowledge from web tools |
 | `PreCompact` | Trigger background AI summarization before `/compact` |
-| `SessionEnd` | Run final summarization, cleanup session files |
+| `SessionEnd` | Generate canvas visualizations, cleanup session files |
 
 ---
 
@@ -237,9 +245,13 @@ vault/
 │   │       ├── patterns/
 │   │       │   ├── patterns.md      # Category index
 │   │       │   └── *.md             # Project-specific patterns
-│   │       └── files/
-│   │           ├── files.md         # Category index
-│   │           └── *.md             # File-specific knowledge
+│   │       ├── files/
+│   │       │   ├── files.md         # Category index
+│   │       │   └── *.md             # File-specific knowledge
+│   │       └── canvases/
+│   │           ├── dashboard.canvas # Grid layout by folder type
+│   │           ├── timeline.canvas  # Decisions chronologically
+│   │           └── graph.canvas     # Radial knowledge graph
 │   ├── global/
 │   │   ├── patterns/                # Reusable cross-project patterns
 │   │   └── knowledge/               # General learnings

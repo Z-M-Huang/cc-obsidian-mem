@@ -4,8 +4,14 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import * as z from "zod";
 import { VaultManager } from "./utils/vault.js";
-import { loadConfig } from "../shared/config.js";
+import { loadConfig, getProjectPath } from "../shared/config.js";
 import type { SearchResult, ProjectContext, Note } from "../shared/types.js";
+import {
+  generateProjectCanvases,
+  detectFolder,
+  type CanvasNote,
+} from "./utils/canvas.js";
+import * as path from "path";
 
 type TextContent = { type: "text"; text: string };
 type ToolResult = { content: TextContent[]; isError?: boolean };
@@ -19,7 +25,7 @@ async function main() {
 
   const server = new McpServer({
     name: "obsidian-mem",
-    version: "0.4.1",
+    version: "0.5.0",
   });
 
   // Tool: mem_search - Search the knowledge base
@@ -423,6 +429,12 @@ async function main() {
           .boolean()
           .default(true)
           .describe("Include relevant patterns"),
+        generateCanvas: z
+          .boolean()
+          .optional()
+          .describe(
+            "Generate/update project canvases (requires canvas.enabled in config)"
+          ),
       },
     },
     async ({
@@ -430,6 +442,7 @@ async function main() {
       includeErrors,
       includeDecisions,
       includePatterns,
+      generateCanvas,
     }): Promise<ToolResult> => {
       try {
         const context = await vault.getProjectContext(project, {
@@ -438,7 +451,62 @@ async function main() {
           includePatterns,
         });
 
-        const output = formatProjectContext(context);
+        let output = formatProjectContext(context);
+
+        // Handle canvas generation
+        // generateCanvas=true: force generate
+        // generateCanvas=false: force skip (per-call opt-out)
+        // generateCanvas=undefined: use autoGenerate config
+        const shouldGenerateCanvas =
+          generateCanvas ?? (config.canvas?.enabled && config.canvas?.autoGenerate);
+
+        if (shouldGenerateCanvas) {
+          if (!config.canvas?.enabled) {
+            output +=
+              "\n\n> Canvas generation requested but disabled in config.";
+          } else {
+            try {
+              const projectPath = getProjectPath(project, config);
+              const notes = await vault.getProjectNotes(project);
+
+              if (notes.length > 0) {
+                const canvasNotes: CanvasNote[] = notes.map((note) => ({
+                  path: note.path,
+                  title: note.title,
+                  folder: detectFolder(note.path),
+                  status: note.frontmatter.status || "active",
+                  created: note.frontmatter.created,
+                }));
+
+                const canvasDir = path.join(projectPath, "canvases");
+                const updateStrategy = config.canvas.updateStrategy || "skip";
+
+                const result = generateProjectCanvases(
+                  project,
+                  canvasNotes,
+                  canvasDir,
+                  updateStrategy,
+                  false // don't force
+                );
+
+                const generated: string[] = [];
+                if (result.dashboard)
+                  generated.push(`Dashboard: ${result.dashboard}`);
+                if (result.timeline)
+                  generated.push(`Timeline: ${result.timeline}`);
+                if (result.graph) generated.push(`Graph: ${result.graph}`);
+
+                if (generated.length > 0) {
+                  output += `\n\n## Generated Canvases\n${generated
+                    .map((g) => `- ${g}`)
+                    .join("\n")}`;
+                }
+              }
+            } catch (canvasError) {
+              output += `\n\n> Canvas generation failed: ${canvasError}`;
+            }
+          }
+        }
 
         return {
           content: [{ type: "text", text: output }],
@@ -486,6 +554,114 @@ async function main() {
         return {
           content: [
             { type: "text", text: `Failed to list projects: ${error}` },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  // Tool: mem_generate_canvas - Generate visualization canvases
+  server.registerTool(
+    "mem_generate_canvas",
+    {
+      title: "Generate Project Canvas",
+      description:
+        "Generate visualization canvases for a project (dashboard, timeline, graph). " +
+        "Requires canvas.enabled=true in config.",
+      inputSchema: {
+        project: z.string().describe("Project name"),
+        types: z
+          .array(z.enum(["dashboard", "timeline", "graph"]))
+          .optional()
+          .describe("Canvas types to generate (default: all)"),
+        force: z
+          .boolean()
+          .optional()
+          .describe("Overwrite existing canvases regardless of updateStrategy"),
+      },
+    },
+    async ({ project, types, force }): Promise<ToolResult> => {
+      try {
+        // Check if canvas is enabled
+        if (!config.canvas?.enabled) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: "Canvas generation is disabled. Enable it in config: canvas.enabled = true",
+              },
+            ],
+            isError: true,
+          };
+        }
+
+        // Get all notes for the project
+        const projectPath = getProjectPath(project, config);
+        const notes = await vault.getProjectNotes(project);
+
+        if (notes.length === 0) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `No notes found for project "${project}". Create some notes first.`,
+              },
+            ],
+          };
+        }
+
+        // Convert to CanvasNote format
+        const canvasNotes: CanvasNote[] = notes.map((note) => ({
+          path: note.path,
+          title: note.title,
+          folder: detectFolder(note.path),
+          status: note.frontmatter.status || "active",
+          created: note.frontmatter.created,
+        }));
+
+        // Generate canvases
+        const canvasDir = path.join(projectPath, "canvases");
+        const updateStrategy = config.canvas.updateStrategy || "skip";
+
+        const result = generateProjectCanvases(
+          project,
+          canvasNotes,
+          canvasDir,
+          updateStrategy,
+          force || false,
+          types
+        );
+
+        // Format output
+        const generated: string[] = [];
+        if (result.dashboard) generated.push(`- Dashboard: ${result.dashboard}`);
+        if (result.timeline) generated.push(`- Timeline: ${result.timeline}`);
+        if (result.graph) generated.push(`- Graph: ${result.graph}`);
+
+        if (generated.length === 0) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `No canvases generated (existing files skipped due to updateStrategy: "${updateStrategy}"). Use force=true to overwrite.`,
+              },
+            ],
+          };
+        }
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Generated ${generated.length} canvas(es) for project "${project}":\n${generated.join("\n")}`,
+            },
+          ],
+        };
+      } catch (error) {
+        return {
+          content: [
+            { type: "text", text: `Failed to generate canvases: ${error}` },
           ],
           isError: true,
         };

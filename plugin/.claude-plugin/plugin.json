@@ -1,6 +1,6 @@
 {
   "name": "cc-obsidian-mem",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "Obsidian-based persistent memory system for Claude Code - captures session activity into Obsidian vault",
   "author": {
     "name": "Mark Huang"

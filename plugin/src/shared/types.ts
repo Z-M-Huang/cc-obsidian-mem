@@ -29,6 +29,19 @@ export interface Config {
     includeRelatedErrors: boolean;
     includeProjectPatterns: boolean;
   };
+  canvas?: CanvasConfig;
+}
+
+/**
+ * Canvas configuration for visualization generation
+ */
+export interface CanvasConfig {
+  /** Master switch - canvas generation is OFF by default */
+  enabled: boolean;
+  /** Auto-generate canvases on mem_project_context (default: false) */
+  autoGenerate: boolean;
+  /** Update strategy: 'overwrite' | 'append' | 'skip' (default: 'skip') */
+  updateStrategy: 'overwrite' | 'append' | 'skip';
 }
 
 /**
