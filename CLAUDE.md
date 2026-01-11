@@ -101,8 +101,15 @@ cc-obsidian-mem/
 - User config: `~/.cc-obsidian-mem/config.json`
 
 #### MCP Server
-- `plugin/src/mcp-server/index.ts` - MCP server entry point, registers all `mem_*` tools
+- `plugin/src/mcp-server/index.ts` - MCP server entry point (stdio transport for local use)
+- `plugin/src/mcp-server/http-server.ts` - HTTP/SSE server (for remote/Docker deployment)
 - `plugin/src/mcp-server/utils/vault.ts` - Vault read/write operations, note linking, superseding
+
+#### HTTP/SSE Deployment
+- `plugin/Dockerfile` - Container image for HTTP server
+- `plugin/docker-compose.yml` - Docker Compose with Traefik labels
+- `plugin/.env.example` - Environment variable template
+- `plugin/docs/HTTP-DEPLOYMENT.md` - Full deployment guide
 
 #### Utility Scripts
 - `plugin/scripts/backfill-parent-links.ts` - Backfill parent links and create category indexes for existing notes
@@ -127,6 +134,28 @@ claude /plugin uninstall cc-obsidian-mem
 # Check installed plugins
 claude /plugin list
 ```
+
+### HTTP/SSE Deployment (Remote Access)
+
+For remote access via Claude.ai or other HTTP clients, deploy as a Docker container with Traefik:
+
+```bash
+cd plugin
+
+# Configure environment
+cp .env.example .env
+# Edit .env: set VAULT_PATH, DOMAIN, BEARER_TOKEN
+
+# Deploy with Docker Compose
+docker compose up -d
+```
+
+**Endpoints:**
+- `/mcp` - Streamable HTTP (recommended)
+- `/sse` + `/messages` - Legacy SSE (deprecated)
+- `/health` - Health check
+
+See `plugin/docs/HTTP-DEPLOYMENT.md` for complete setup guide.
 
 ### Important Notes
 
