@@ -16,7 +16,6 @@ export const GLOBAL_FOLDER = 'global';
  * Note types
  */
 export const NOTE_TYPES = [
-  'session',
   'error',
   'decision',
   'pattern',
@@ -28,7 +27,6 @@ export const NOTE_TYPES = [
  * Template file names
  */
 export const TEMPLATE_FILES = {
-  session: 'session.md',
   error: 'error.md',
   decision: 'decision.md',
   pattern: 'pattern.md',

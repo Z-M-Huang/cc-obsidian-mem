@@ -36,7 +36,6 @@ function createTestConfig(vaultPath: string, overrides?: Partial<Config>): Confi
     contextInjection: {
       enabled: true,
       maxTokens: 4000,
-      includeRecentSessions: 3,
       includeRelatedErrors: true,
       includeProjectPatterns: true,
     },

@@ -26,7 +26,6 @@ export interface Config {
   contextInjection: {
     enabled: boolean;
     maxTokens: number;
-    includeRecentSessions: number;
     includeRelatedErrors: boolean;
     includeProjectPatterns: boolean;
   };
@@ -125,7 +124,7 @@ export interface SearchResult {
  * Note types
  */
 
-export type NoteType = 'session' | 'error' | 'decision' | 'pattern' | 'file' | 'learning';
+export type NoteType = 'error' | 'decision' | 'pattern' | 'file' | 'learning';
 
 export type NoteStatus = 'active' | 'superseded' | 'draft';
 
@@ -186,12 +185,6 @@ export interface ProjectInfo {
 export interface ProjectContext {
   project: string;
   summary: string;
-  recentSessions: Array<{
-    id: string;
-    date: string;
-    summary: string;
-    keyActions: string[];
-  }>;
   unresolvedErrors: Array<{
     type: string;
     message: string;

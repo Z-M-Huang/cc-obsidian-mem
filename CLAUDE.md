@@ -62,9 +62,9 @@ When releasing a new version, update the version number in **all three files**:
 
 | File                                | Field                | Example              |
 | ----------------------------------- | -------------------- | -------------------- |
-| `plugin/package.json`               | `version`            | `"version": "0.3.1"` |
-| `plugin/.claude-plugin/plugin.json` | `version`            | `"version": "0.3.1"` |
-| `.claude-plugin/marketplace.json`   | `plugins[0].version` | `"version": "0.3.1"` |
+| `plugin/package.json`               | `version`            | `"version": "0.3.2"` |
+| `plugin/.claude-plugin/plugin.json` | `version`            | `"version": "0.3.2"` |
+| `.claude-plugin/marketplace.json`   | `plugins[0].version` | `"version": "0.3.2"` |
 
 ### Project Structure
 
@@ -93,12 +93,12 @@ cc-obsidian-mem/
 
 #### Hook Scripts
 
-- `plugin/hooks/scripts/session-start.ts` - Initialize session, inject context
+- `plugin/hooks/scripts/session-start.ts` - Initialize session tracking, inject project context
 - `plugin/hooks/scripts/user-prompt-submit.ts` - Track user prompts
 - `plugin/hooks/scripts/post-tool-use.ts` - Capture tool observations, extract knowledge from WebFetch/WebSearch/Context7
 - `plugin/hooks/scripts/pre-compact.ts` - Trigger background summarization before compaction
-- `plugin/hooks/scripts/background-summarize.ts` - AI-powered knowledge extraction (spawned by pre-compact)
-- `plugin/hooks/scripts/session-end.ts` - Finalize session, generate summaries
+- `plugin/hooks/scripts/background-summarize.ts` - AI-powered knowledge extraction (spawned by pre-compact/session-end)
+- `plugin/hooks/scripts/session-end.ts` - Run final summarization, cleanup ephemeral session files
 
 #### Configuration
 

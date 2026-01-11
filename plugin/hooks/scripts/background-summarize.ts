@@ -27,7 +27,6 @@ interface SummarizeInput {
   project: string;
   trigger: 'pre-compact' | 'session-end';
   mem_folder: string;
-  session_path?: string; // Path to session note (for session-end trigger)
 }
 
 interface KnowledgeResult {
@@ -144,21 +143,10 @@ async function main() {
         }
       }
 
-      // Store paths or update session note depending on trigger
-      if (knowledgePaths.length > 0) {
-        if (input.trigger === 'pre-compact') {
-          // For pre-compact: store paths in session file for session-end to link later
-          updatePreCompactKnowledge(input.session_id, knowledgePaths);
-          log(`Stored ${knowledgePaths.length} knowledge paths in session`);
-        } else if (input.trigger === 'session-end' && input.session_path) {
-          // For session-end: update the session note directly with knowledge links
-          try {
-            await vault.linkSessionToKnowledge(input.session_path, knowledgePaths);
-            log(`Linked ${knowledgePaths.length} knowledge items to session note`);
-          } catch (error) {
-            log(`ERROR linking knowledge to session: ${error}`);
-          }
-        }
+      // Store paths for session-end to pick up (if triggered by pre-compact)
+      if (knowledgePaths.length > 0 && input.trigger === 'pre-compact') {
+        updatePreCompactKnowledge(input.session_id, knowledgePaths);
+        log(`Stored ${knowledgePaths.length} knowledge paths in session`);
       }
 
       log(`Background summarization complete: ${knowledgePaths.length} notes written`);

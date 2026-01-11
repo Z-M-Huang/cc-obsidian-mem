@@ -95,26 +95,15 @@ Welcome to your Claude Code knowledge base. This dashboard provides an overview 
 ## Quick Stats
 
 - **Total Notes**: \`$= dv.pages('"${memFolder}"').length\`
-- **Sessions**: \`$= dv.pages('"${memFolder}"').where(p => p.type == "session").length\`
+- **Knowledge**: \`$= dv.pages('"${memFolder}"').where(p => p.type == "learning").length\`
 - **Errors**: \`$= dv.pages('"${memFolder}"').where(p => p.type == "error").length\`
 - **Decisions**: \`$= dv.pages('"${memFolder}"').where(p => p.type == "decision").length\`
-
-## Recent Sessions
-
-\`\`\`dataview
-TABLE project, duration_minutes as "Duration", observations_count as "Actions", errors_encountered as "Errors"
-FROM "${memFolder}/projects"
-WHERE type = "session"
-SORT start_time DESC
-LIMIT 10
-\`\`\`
 
 ## Active Projects
 
 \`\`\`dataview
-TABLE length(rows) as "Sessions", sum(rows.observations_count) as "Total Actions"
+TABLE length(rows) as "Notes"
 FROM "${memFolder}/projects"
-WHERE type = "session"
 GROUP BY project
 SORT length(rows) DESC
 \`\`\`
@@ -166,43 +155,6 @@ async function createTemplates(vaultPath: string, memFolder: string): Promise<vo
   if (!fs.existsSync(templatesDir)) {
     fs.mkdirSync(templatesDir, { recursive: true });
   }
-
-  // Session template
-  fs.writeFileSync(path.join(templatesDir, 'session.md'), `---
-type: session
-session_id: ""
-project: ""
-start_time:
-end_time:
-duration_minutes:
-status: ""
-tags:
-  - session
----
-
-# Session: {{date}}
-
-## Summary
-
-> [!note] Session Summary
-> _Summary will be generated after session ends_
-
-## Key Actions
-
-- Action 1
-- Action 2
-
-## Files Modified
-
-- \`file1.ts\`
-
-## Observations
-
-### Observation 1
-
-> [!info] Tool: Edit
-> Details here
-`);
 
   // Error template
   fs.writeFileSync(path.join(templatesDir, 'error.md'), `---

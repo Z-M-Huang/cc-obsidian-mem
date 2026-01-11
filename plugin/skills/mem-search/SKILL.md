@@ -1,6 +1,6 @@
 ---
 name: mem-search
-description: Search the Claude Code knowledge base for past sessions, errors, solutions, decisions, and patterns. Use this to find information from previous coding sessions.
+description: Search the Claude Code knowledge base for errors, solutions, decisions, and patterns. Use this to find information from your memory system.
 version: 1.0.0
 allowed-tools:
   - mcp__obsidian-mem__mem_search
@@ -10,7 +10,7 @@ allowed-tools:
 
 # Memory Search Skill
 
-Search your Claude Code knowledge base to find relevant information from past sessions.
+Search your Claude Code knowledge base to find relevant information.
 
 ## When to Use
 
@@ -18,7 +18,7 @@ Search your Claude Code knowledge base to find relevant information from past se
 - Recalling decisions made about the codebase
 - Looking up patterns used before
 - Getting context about a file's history
-- Finding what was done in recent sessions
+- Finding knowledge and learnings
 
 ## Usage
 
@@ -28,7 +28,7 @@ The skill accepts a natural language query. Examples:
 /mem-search authentication error fix
 /mem-search database schema decisions
 /mem-search how did we handle caching
-/mem-search recent sessions for this project
+/mem-search API rate limiting patterns
 ```
 
 ## Workflow
@@ -42,6 +42,7 @@ The skill accepts a natural language query. Examples:
    - For errors: filter by `type: error`
    - For decisions: filter by `type: decision`
    - For patterns: filter by `type: pattern`
+   - For knowledge: filter by `type: learning`
 
 3. **Present Results**
    - Show a summary of top matches
@@ -71,4 +72,4 @@ If the user wants project-wide context:
 mem_project_context({ project: "project-name" })
 ```
 
-This returns recent sessions, unresolved errors, and active decisions for the project.
+This returns unresolved errors, active decisions, and patterns for the project.

@@ -19,16 +19,61 @@ function findGitRoot(startDir: string): string | null {
 }
 
 /**
+ * Check if cwd is inside the plugin's hooks/scripts directory
+ * This detects the Claude Code bug where hooks receive plugin path as cwd
+ */
+function isInPluginHooksPath(cwd: string): boolean {
+  const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT;
+  if (!pluginRoot) return false;
+
+  try {
+    // Use realpathSync to resolve symlinks, then normalize for cross-platform compatibility
+    // This handles cases where CLAUDE_PLUGIN_ROOT or cwd is a symlinked path
+    const normalizedCwd = fs.realpathSync(cwd);
+    const hooksPath = fs.realpathSync(path.join(pluginRoot, 'hooks'));
+
+    // Only detect as plugin context if inside hooks/ subdirectory
+    // This allows legitimate work inside the plugin repo to be tracked normally
+    return normalizedCwd.startsWith(hooksPath + path.sep) || normalizedCwd === hooksPath;
+  } catch {
+    // If realpathSync fails (path doesn't exist), fall back to path.resolve
+    try {
+      const normalizedCwd = path.resolve(cwd);
+      const hooksPath = path.resolve(pluginRoot, 'hooks');
+      return normalizedCwd.startsWith(hooksPath + path.sep) || normalizedCwd === hooksPath;
+    } catch {
+      return false;
+    }
+  }
+}
+
+/**
  * Get project info from the current working directory
  */
 export async function getProjectInfo(cwd: string): Promise<ProjectInfo> {
+  // Check if cwd is inside the plugin's hooks directory (Claude Code bug workaround)
+  // When this happens, cwd points to hooks/scripts instead of user's project
+  if (isInPluginHooksPath(cwd)) {
+    // Can't determine real project - fall back to global
+    return {
+      name: 'global',
+      path: cwd,
+    };
+  }
+
+  // Find git root - this is the most reliable project detection
+  const gitRoot = findGitRoot(cwd);
+
+  // Determine project name:
+  // 1. Try git remote URL (most accurate for git projects)
+  // 2. Fall back to git root basename
+  // 3. Fall back to cwd basename
   const info: ProjectInfo = {
-    name: path.basename(cwd),
-    path: cwd,
+    name: gitRoot ? path.basename(gitRoot) : path.basename(cwd),
+    path: gitRoot || cwd,
   };
 
-  // Try to get git info by searching up the directory tree
-  const gitRoot = findGitRoot(cwd);
+  // Try to extract better name from git remote
   if (gitRoot) {
     const gitDir = path.join(gitRoot, '.git');
     try {
@@ -57,7 +102,7 @@ export async function getProjectInfo(cwd: string): Promise<ProjectInfo> {
         }
       }
     } catch {
-      // Ignore git errors
+      // Ignore git errors - fallback name is already set
     }
   }
 

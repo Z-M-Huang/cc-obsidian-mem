@@ -27,7 +27,6 @@ async function main() {
     if (config.contextInjection.enabled) {
       try {
         const context = await vault.getProjectContext(project.name, {
-          includeRecentSessions: config.contextInjection.includeRecentSessions,
           includeErrors: config.contextInjection.includeRelatedErrors,
           includeDecisions: true,
           includePatterns: config.contextInjection.includeProjectPatterns,
@@ -59,14 +58,6 @@ function formatProjectContext(
 
   // Add header
   lines.push(`<!-- Memory context for ${context.project} -->`);
-
-  // Recent sessions
-  if (context.recentSessions.length > 0) {
-    lines.push('\n## Recent Sessions');
-    for (const session of context.recentSessions.slice(0, 3)) {
-      lines.push(`- **${session.date}**: ${session.summary || 'No summary'}`);
-    }
-  }
 
   // Unresolved errors
   if (context.unresolvedErrors.length > 0) {

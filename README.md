@@ -4,8 +4,8 @@ Obsidian-based persistent memory system for Claude Code. Automatically captures 
 
 ## Features
 
-- **Automatic Capture**: Session hooks automatically log file edits, commands, and errors
-- **AI Summaries**: Claude-powered session summaries and knowledge extraction
+- **Automatic Capture**: Hooks automatically track file edits, commands, and errors
+- **AI Summaries**: Claude-powered knowledge extraction from conversations
 - **Obsidian Integration**: Full Obsidian syntax support with Dataview queries for visualization
 - **Project Organization**: Memories organized by project with cross-project patterns
 - **MCP Tools**: Search, read, and write memories directly from Claude Code
@@ -72,14 +72,11 @@ The wizard will prompt you for your Obsidian vault path and create the config fi
   },
   "summarization": {
     "enabled": true,
-    "model": "sonnet",
-    "sessionSummary": true,
-    "errorSummary": true
+    "model": "sonnet"
   },
   "contextInjection": {
     "enabled": true,
     "maxTokens": 4000,
-    "includeRecentSessions": 3,
     "includeRelatedErrors": true,
     "includeProjectPatterns": true
   }
@@ -149,10 +146,10 @@ You can also add this to your global `~/.claude/CLAUDE.md` to apply it to all pr
 ### Automatic Capture
 
 Once installed, the plugin automatically:
-- Logs file edits, bash commands, and errors during sessions
-- Creates session notes with observations
+- Tracks file edits, bash commands, and errors during sessions
 - Extracts knowledge from web searches and documentation lookups
-- Generates AI summaries when you run `/compact` or end a session
+- Generates AI-powered knowledge extraction when you run `/compact` or end a session
+- Persists decisions, errors, patterns, and learnings to your Obsidian vault
 
 ### Skills (User Commands)
 
@@ -160,7 +157,7 @@ Once installed, the plugin automatically:
 ```
 /mem-search authentication error fix
 /mem-search database schema decisions
-/mem-search recent sessions
+/mem-search API rate limiting patterns
 ```
 
 #### `/mem-save` - Save knowledge explicitly
@@ -200,7 +197,7 @@ These tools are available to Claude during conversations:
        ▼
 ┌──────────────┐     ┌─────────────┐
 │    Hooks     │────►│Session Store│
-│ (Lifecycle)  │     │ (File-based)│
+│ (Lifecycle)  │     │ (Ephemeral) │
 └──────────────┘     └─────────────┘
 ```
 
@@ -208,11 +205,11 @@ These tools are available to Claude during conversations:
 
 | Hook | Purpose |
 |------|---------|
-| `SessionStart` | Initialize session, inject recent context |
+| `SessionStart` | Initialize session tracking, inject project context |
 | `UserPromptSubmit` | Track user prompts |
 | `PostToolUse` | Capture observations, extract knowledge from web tools |
-| `PreCompact` | Trigger background summarization before `/compact` |
-| `SessionEnd` | Finalize session, link knowledge notes |
+| `PreCompact` | Trigger background AI summarization before `/compact` |
+| `SessionEnd` | Run final summarization, cleanup session files |
 
 ---
 
@@ -225,9 +222,6 @@ vault/
 │   ├── projects/
 │   │   └── {project-name}/
 │   │       ├── {project-name}.md    # Project overview
-│   │       ├── sessions/
-│   │       │   ├── sessions.md      # Category index
-│   │       │   └── *.md             # Session logs
 │   │       ├── errors/
 │   │       │   ├── errors.md        # Category index
 │   │       │   └── *.md             # Error patterns
@@ -236,19 +230,23 @@ vault/
 │   │       │   └── *.md             # Architectural decisions
 │   │       ├── knowledge/
 │   │       │   ├── knowledge.md     # Category index
-│   │       │   └── *.md             # Q&A, explanations, research
+│   │       │   └── *.md             # Q&A, explanations, learnings
 │   │       ├── research/
 │   │       │   ├── research.md      # Category index
 │   │       │   └── *.md             # External research notes
+│   │       ├── patterns/
+│   │       │   ├── patterns.md      # Category index
+│   │       │   └── *.md             # Project-specific patterns
 │   │       └── files/
 │   │           ├── files.md         # Category index
 │   │           └── *.md             # File-specific knowledge
 │   ├── global/
-│   │   ├── patterns/                # Reusable patterns
-│   │   ├── tools/                   # Tool usage notes
-│   │   └── learnings/               # General learnings
+│   │   ├── patterns/                # Reusable cross-project patterns
+│   │   └── knowledge/               # General learnings
 │   └── templates/                   # Note templates
 ```
+
+> **Note**: Session data is stored ephemerally in `~/.cc-obsidian-mem/sessions/` during active sessions and cleaned up when sessions end. Only persistent knowledge is stored in the vault.
 
 ### Note Linking
 
@@ -266,7 +264,7 @@ Notes follow a hierarchical linking structure for Obsidian graph navigation:
 - **Callouts**: `> [!warning]`, `> [!success]` for visual highlighting
 - **Dataview queries**: Dynamic dashboards and indexes
 - **Graph view**: Visualize connections between notes
-- **Tags**: `#session`, `#error`, `#project/name` for organization
+- **Tags**: `#error`, `#decision`, `#learning`, `#project/name` for organization
 
 ---
 

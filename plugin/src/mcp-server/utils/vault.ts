@@ -55,7 +55,7 @@ export class VaultManager {
       sanitizeProjectName(projectName)
     );
 
-    const categories = ['sessions', 'errors', 'decisions', 'patterns', 'files', 'knowledge', 'research'];
+    const categories = ['errors', 'decisions', 'patterns', 'files', 'knowledge', 'research'];
     const dirs = [
       projectPath,
       ...categories.map(cat => path.join(projectPath, cat)),
@@ -111,11 +111,6 @@ export class VaultManager {
 
     // Category-specific configuration
     const categoryConfig: Record<string, { title: string; type: string; description: string }> = {
-      sessions: {
-        title: 'Sessions',
-        type: 'session',
-        description: 'Coding sessions with Claude Code',
-      },
       errors: {
         title: 'Errors',
         type: 'error',
@@ -193,7 +188,7 @@ SORT created DESC
     const relativePath = path.relative(this.getMemPath(), projectPath);
 
     // Category links (e.g., decisions/decisions.md)
-    const categories = ['knowledge', 'research', 'decisions', 'sessions', 'errors', 'files'];
+    const categories = ['knowledge', 'research', 'decisions', 'errors', 'files', 'patterns'];
     const categoryLinks = categories
       .map(cat => `- [[${this.memFolder}/${relativePath}/${cat}/${cat}|${cat.charAt(0).toUpperCase() + cat.slice(1)}]]`)
       .join('\n');
@@ -205,16 +200,6 @@ SORT created DESC
 ${categoryLinks}
 
 ---
-
-## Recent Sessions
-
-\`\`\`dataview
-TABLE start_time as "Started", duration_minutes as "Duration", observations_count as "Actions"
-FROM "${this.memFolder}/${relativePath}/sessions"
-WHERE type = "session" AND !contains(tags, "index")
-SORT start_time DESC
-LIMIT 10
-\`\`\`
 
 ## Active Errors
 
@@ -625,77 +610,6 @@ ${keyPointsSection}${sourceSection}
     return paths;
   }
 
-  /**
-   * Update a session note to link to knowledge items
-   * Appends to existing "Knowledge Captured" section if present
-   */
-  async linkSessionToKnowledge(
-    sessionPath: string,
-    knowledgePaths: string[]
-  ): Promise<void> {
-    if (knowledgePaths.length === 0) return;
-
-    const fullPath = this.resolvePath(sessionPath);
-    if (!fs.existsSync(fullPath)) return;
-
-    try {
-      let raw = fs.readFileSync(fullPath, 'utf-8');
-
-      // Build knowledge links using full paths from vault root
-      const links = knowledgePaths
-        .map(p => {
-          const linkPath = p.replace(/\.md$/, '');
-          return `- [[${this.memFolder}/${linkPath}]]`;
-        })
-        .join('\n');
-
-      // Check if Knowledge section already exists
-      if (raw.includes('## Knowledge Captured')) {
-        // Find the section and append to it (before next ## or end of file)
-        const sectionStart = raw.indexOf('## Knowledge Captured');
-        const afterSection = raw.substring(sectionStart);
-        const nextSectionMatch = afterSection.match(/\n## [^#]/);
-
-        if (nextSectionMatch && nextSectionMatch.index !== undefined) {
-          // Insert before next section, ensuring newline separation
-          const insertPos = sectionStart + nextSectionMatch.index;
-          // Add newline before links to ensure separation from existing content
-          raw = raw.substring(0, insertPos) + '\n' + links + raw.substring(insertPos);
-        } else {
-          // Append to end of file with proper newline
-          raw = raw.trimEnd() + '\n' + links + '\n';
-        }
-        fs.writeFileSync(fullPath, raw);
-      } else {
-        // Create new section
-        const knowledgeSection = `\n## Knowledge Captured\n\n${links}\n`;
-        fs.appendFileSync(fullPath, knowledgeSection);
-      }
-
-      // Update knowledge_captured count in frontmatter
-      this.updateKnowledgeCount(fullPath, knowledgePaths.length);
-    } catch (error) {
-      console.error(`Failed to link session to knowledge: ${sessionPath}`, error);
-    }
-  }
-
-  /**
-   * Update the knowledge_captured count in session frontmatter
-   */
-  private updateKnowledgeCount(fullPath: string, addCount: number): void {
-    try {
-      const raw = fs.readFileSync(fullPath, 'utf-8');
-      const { frontmatter, content } = parseFrontmatter(raw);
-
-      const currentCount = (frontmatter.knowledge_captured as number) || 0;
-      frontmatter.knowledge_captured = currentCount + addCount;
-      frontmatter.updated = new Date().toISOString();
-
-      fs.writeFileSync(fullPath, stringifyFrontmatter(frontmatter, content));
-    } catch {
-      // Ignore errors - count update is best-effort
-    }
-  }
 
   /**
    * Search knowledge notes
@@ -884,7 +798,6 @@ ${keyPointsSection}${sourceSection}
    * Get project context for injection
    */
   async getProjectContext(projectName: string, options: {
-    includeRecentSessions?: number;
     includeErrors?: boolean;
     includeDecisions?: boolean;
     includePatterns?: boolean;
@@ -898,7 +811,6 @@ ${keyPointsSection}${sourceSection}
     const context: ProjectContext = {
       project: projectName,
       summary: '',
-      recentSessions: [],
       unresolvedErrors: [],
       activeDecisions: [],
       patterns: [],
@@ -906,32 +818,6 @@ ${keyPointsSection}${sourceSection}
 
     if (!fs.existsSync(projectPath)) {
       return context;
-    }
-
-    // Get recent sessions
-    if (options.includeRecentSessions !== 0) {
-      const sessionsDir = path.join(projectPath, 'sessions');
-      if (fs.existsSync(sessionsDir)) {
-        const sessionFiles = this.walkDir(sessionsDir, '.md')
-          .sort((a, b) => fs.statSync(b).mtime.getTime() - fs.statSync(a).mtime.getTime())
-          .slice(0, options.includeRecentSessions || 3);
-
-        for (const file of sessionFiles) {
-          try {
-            const { frontmatter, content } = parseFrontmatter(
-              fs.readFileSync(file, 'utf-8')
-            );
-            context.recentSessions.push({
-              id: frontmatter.session_id as string || path.basename(file, '.md'),
-              date: frontmatter.created,
-              summary: frontmatter.summary as string || this.extractFirstParagraph(content),
-              keyActions: [],
-            });
-          } catch {
-            // Skip
-          }
-        }
-      }
     }
 
     // Get unresolved errors
@@ -1050,12 +936,6 @@ ${keyPointsSection}${sourceSection}
     let fallbackSlug = 'untitled';
 
     switch (input.type) {
-      case 'session':
-        folder = input.project
-          ? `${PROJECTS_FOLDER}/${sanitizeProjectName(input.project)}/sessions`
-          : `${GLOBAL_FOLDER}/sessions`;
-        fallbackSlug = 'untitled-session';
-        break;
       case 'error':
         folder = input.project
           ? `${PROJECTS_FOLDER}/${sanitizeProjectName(input.project)}/errors`

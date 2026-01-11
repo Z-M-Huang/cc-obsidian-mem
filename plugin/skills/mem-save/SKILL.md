@@ -16,7 +16,7 @@ Explicitly save knowledge to the Claude Code memory system for future reference.
 - Recording an important decision
 - Documenting a useful pattern
 - Saving a solution to a tricky error
-- Noting learnings for future sessions
+- Noting learnings for future reference
 - Creating reusable knowledge
 
 ## Usage
