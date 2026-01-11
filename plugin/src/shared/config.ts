@@ -5,67 +5,89 @@ import type { Config, TechKBConfig, TechKBCategory } from './types.js';
 
 /**
  * Default TechKB category mappings
- * Based on Johnny Decimal structure with PARA methodology
+ * Optimized for both Claude usage (semantic keys) and Obsidian (clean graph clusters)
+ * Structure: 10s=Projects, 20s=Clients, 30s=Infrastructure, 60s=Troubleshooting,
+ *            70s=Guides, 80s=Reference, 90s=Resources
  */
 export const DEFAULT_TECHKB_CATEGORIES: Record<string, TechKBCategory> = {
-  // 10-19: Projects (handled specially)
+  // 10-19: Projects
   projects: {
     id: 'projects',
     name: 'Projects',
     path: '10-projects',
-    description: 'Project-specific documentation and memory',
+    description: 'Active project codebases and their memory',
   },
+
+  // 20-29: Clients (for freelance/agency work)
+  clients: {
+    id: 'clients',
+    name: 'Clients',
+    path: '20-clients',
+    description: 'Client info, contracts, preferences, communications',
+  },
+
   // 30-39: Infrastructure
-  infrastructure: {
-    id: 'infrastructure',
-    name: 'Infrastructure',
-    path: '30-infrastructure',
-    description: 'Infrastructure documentation, server configs, networking',
+  servers: {
+    id: 'servers',
+    name: 'Servers',
+    path: '30-servers',
+    description: 'Server configs, VPS setup, host systems',
   },
-  'mcp-servers': {
-    id: 'mcp-servers',
-    name: 'MCP Servers',
-    path: '30-infrastructure/35-mcp-servers',
-    description: 'MCP server configurations and documentation',
+  containers: {
+    id: 'containers',
+    name: 'Containers',
+    path: '31-containers',
+    description: 'Docker, Kubernetes, Podman, compose files',
   },
-  docker: {
-    id: 'docker',
-    name: 'Docker',
-    path: '30-infrastructure/docker',
-    description: 'Docker and container configurations',
+  networking: {
+    id: 'networking',
+    name: 'Networking',
+    path: '32-networking',
+    description: 'DNS, VPNs, firewalls, Cloudflare, Traefik',
   },
-  // 40-49: Development
-  development: {
-    id: 'development',
-    name: 'Development',
-    path: '40-development',
-    description: 'Development guides, patterns, and best practices',
-  },
+
   // 60-69: Troubleshooting
   troubleshooting: {
     id: 'troubleshooting',
     name: 'Troubleshooting',
     path: '60-troubleshooting',
-    description: 'Error solutions, debugging guides, issue resolutions',
+    description: 'Error solutions, debugging steps, fixes',
   },
+
+  // 70-79: Guides
+  guides: {
+    id: 'guides',
+    name: 'Guides',
+    path: '70-guides',
+    description: 'How-to guides, tutorials, runbooks',
+  },
+
   // 80-89: Reference
   hardware: {
     id: 'hardware',
-    name: 'Hardware Reference',
-    path: '80-reference/hardware',
-    description: 'Hardware specifications, VPS configs, equipment docs',
+    name: 'Hardware',
+    path: '80-hardware',
+    description: 'Hardware specs, VPS specs, device docs',
   },
   software: {
     id: 'software',
-    name: 'Software Reference',
-    path: '80-reference/software',
-    description: 'Software configurations, tool documentation',
+    name: 'Software',
+    path: '81-software',
+    description: 'Software configs, tool settings, app docs',
   },
-  reference: {
-    id: 'reference',
-    name: 'Reference',
-    path: '80-reference',
-    description: 'General reference documentation',
+  commands: {
+    id: 'commands',
+    name: 'Commands',
+    path: '82-commands',
+    description: 'Command cheatsheets, CLI references',
+  },
+
+  // 90-99: Resources
+  resources: {
+    id: 'resources',
+    name: 'Resources',
+    path: '90-resources',
+    description: 'Bookmarks, vendor docs, templates',
   },
 };
 

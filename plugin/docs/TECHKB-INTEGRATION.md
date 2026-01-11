@@ -1,13 +1,14 @@
 # TechKB Integration
 
-cc-obsidian-mem supports integration with TechKB-style vaults that use Johnny Decimal organization (10-projects, 30-infrastructure, etc.).
+cc-obsidian-mem supports integration with TechKB-style vaults that use Johnny Decimal organization.
 
 ## Overview
 
 When TechKB integration is enabled:
 
 1. **Project memory** is stored in `TechKB/10-projects/{project}/_claude-mem/`
-2. **General knowledge** can be written to any TechKB category (infrastructure, hardware, troubleshooting, etc.)
+2. **Client info** is stored in `TechKB/20-clients/{client}/`
+3. **General knowledge** can be written to any TechKB category (servers, hardware, troubleshooting, etc.)
 
 ## Configuration
 
@@ -22,17 +23,7 @@ Add to your `~/.cc-obsidian-mem/config.json`:
   "techkb": {
     "enabled": true,
     "basePath": "TechKB",
-    "projectFolder": "10-projects",
-    "categoryMapping": {
-      "infrastructure": "30-infrastructure",
-      "mcp-servers": "30-infrastructure/35-mcp-servers",
-      "docker": "30-infrastructure/docker",
-      "development": "40-development",
-      "troubleshooting": "60-troubleshooting",
-      "hardware": "80-reference/hardware",
-      "software": "80-reference/software",
-      "reference": "80-reference"
-    }
+    "projectFolder": "10-projects"
   }
 }
 ```
@@ -43,15 +34,17 @@ The following categories are available by default:
 
 | Category Key | Path | Description |
 |--------------|------|-------------|
-| `projects` | `10-projects` | Project-specific documentation |
-| `infrastructure` | `30-infrastructure` | Infrastructure docs, servers, networking |
-| `mcp-servers` | `30-infrastructure/35-mcp-servers` | MCP server configurations |
-| `docker` | `30-infrastructure/docker` | Docker and container configs |
-| `development` | `40-development` | Development guides and patterns |
-| `troubleshooting` | `60-troubleshooting` | Error solutions, debugging guides |
-| `hardware` | `80-reference/hardware` | Hardware specs, VPS configs |
-| `software` | `80-reference/software` | Software configurations |
-| `reference` | `80-reference` | General reference docs |
+| `projects` | `10-projects` | Active project codebases and memory |
+| `clients` | `20-clients` | Client info, contracts, preferences |
+| `servers` | `30-servers` | Server configs, VPS setup |
+| `containers` | `31-containers` | Docker, Kubernetes, Podman |
+| `networking` | `32-networking` | DNS, VPNs, Cloudflare, Traefik |
+| `troubleshooting` | `60-troubleshooting` | Error solutions, debugging |
+| `guides` | `70-guides` | How-to guides, tutorials, runbooks |
+| `hardware` | `80-hardware` | Hardware specs, VPS specs |
+| `software` | `81-software` | Software configs, tool settings |
+| `commands` | `82-commands` | Command cheatsheets, CLI references |
+| `resources` | `90-resources` | Bookmarks, vendor docs, templates |
 
 ## Custom Categories
 
@@ -61,9 +54,9 @@ Add custom categories by extending the `categoryMapping` in your config:
 {
   "techkb": {
     "categoryMapping": {
-      "networking": "30-infrastructure/networking",
-      "databases": "30-infrastructure/databases",
-      "security": "40-development/security"
+      "databases": "33-databases",
+      "security": "34-security",
+      "automation": "50-automation"
     }
   }
 }
@@ -110,7 +103,7 @@ Search TechKB notes:
 ```json
 {
   "query": "docker compose traefik",
-  "category": "infrastructure",
+  "category": "containers",
   "limit": 10
 }
 ```
@@ -121,26 +114,78 @@ With TechKB enabled, your vault structure becomes:
 
 ```
 vault/
-├── TechKB/
-│   ├── 10-projects/
-│   │   ├── my-project/
-│   │   │   └── _claude-mem/         # Project memory
-│   │   │       ├── sessions/
-│   │   │       ├── decisions/
-│   │   │       ├── errors/
-│   │   │       └── knowledge/
-│   │   └── another-project/
-│   │       └── _claude-mem/
-│   ├── 30-infrastructure/
-│   │   ├── 35-mcp-servers/          # MCP server docs
-│   │   ├── docker/                   # Docker configs
-│   │   └── networking/               # Network docs
-│   ├── 60-troubleshooting/          # Error solutions
-│   └── 80-reference/
-│       ├── hardware/                 # Hardware specs
-│       └── software/                 # Software configs
-└── _claude-mem/                      # Global memory (if not using TechKB)
-    └── global/
+└── TechKB/
+    ├── 10-projects/                    # Active project work
+    │   ├── acme-website/
+    │   │   └── _claude-mem/            # Project memory
+    │   │       ├── sessions/
+    │   │       ├── decisions/
+    │   │       ├── errors/
+    │   │       └── knowledge/
+    │   └── personal-portfolio/
+    │       └── _claude-mem/
+    │
+    ├── 20-clients/                     # Client relationships
+    │   ├── acme-corp/
+    │   │   ├── acme-corp.md            # Client overview
+    │   │   ├── contracts/
+    │   │   └── communications/
+    │   └── bobs-plumbing/
+    │
+    ├── 30-servers/                     # Infrastructure cluster
+    ├── 31-containers/
+    ├── 32-networking/
+    │
+    ├── 60-troubleshooting/             # Problem-solving
+    │
+    ├── 70-guides/                      # Learning cluster
+    │
+    ├── 80-hardware/                    # Reference cluster
+    ├── 81-software/
+    ├── 82-commands/
+    │
+    └── 90-resources/                   # Meta cluster
+```
+
+## Client Workflow
+
+For freelance/agency work with multiple clients:
+
+### 1. New Client Onboard
+
+```
+mem_techkb_write category="clients" title="Acme Corp" filename="acme-corp"
+content="## Contact
+- John Smith (john@acme.com)
+- Budget: $5k/month
+
+## Preferences
+- Prefers Next.js + Tailwind
+- Weekly standups Friday 2pm
+- Communication via Slack"
+```
+
+### 2. Start Their Project
+
+When you start working on `acme-website`, Claude Code automatically creates:
+- `10-projects/acme-website/_claude-mem/` for project memory
+
+### 3. Reference Client Preferences
+
+```
+mem_techkb_search query="Acme preferences" category="clients"
+```
+
+## Project Naming Convention
+
+For client projects, use `{client}-{project-type}`:
+
+```
+10-projects/
+├── acme-website/           # Acme Corp's marketing site
+├── acme-dashboard/         # Acme Corp's internal dashboard
+├── bobs-plumbing-site/     # Bob's Plumbing website
+└── personal-portfolio/     # Your own projects
 ```
 
 ## Default Frontmatter
@@ -163,34 +208,41 @@ Configure default frontmatter for all TechKB notes:
 ### Documenting Hardware Specs
 
 ```
-Use mem_techkb_write with:
-- category: "hardware"
-- title: "Raspberry Pi 5 Home Server"
-- content: Specifications and configuration details
+mem_techkb_write category="hardware" title="Raspberry Pi 5 Home Server"
 ```
 
 ### Recording Troubleshooting Steps
 
 ```
-Use mem_techkb_write with:
-- category: "troubleshooting"
-- title: "Docker Container Permission Denied Fix"
-- content: Problem description and solution steps
+mem_techkb_write category="troubleshooting" title="Docker Permission Denied Fix"
 ```
 
-### Searching Infrastructure Docs
+### Saving a Useful Command
 
 ```
-Use mem_techkb_search with:
-- query: "cloudflare tunnel"
-- category: "infrastructure"
+mem_techkb_write category="commands" title="Docker Cleanup Commands"
+content="## Remove all stopped containers
+docker container prune -f
+
+## Remove unused images
+docker image prune -a -f"
+```
+
+### Creating a Guide
+
+```
+mem_techkb_write category="guides" title="Setting Up Traefik with Docker"
 ```
 
 ## Integration with Project Memory
 
 TechKB integration works alongside regular project memory:
 
-- Use `mem_write` for project-specific decisions, errors, sessions
-- Use `mem_techkb_write` for general knowledge that applies across projects
-- Use `mem_search` for project memory
-- Use `mem_techkb_search` for TechKB knowledge
+| Use Case | Tool | Location |
+|----------|------|----------|
+| Project decisions | `mem_write` | `10-projects/{project}/_claude-mem/decisions/` |
+| Project errors | `mem_write` | `10-projects/{project}/_claude-mem/errors/` |
+| Client info | `mem_techkb_write` | `20-clients/{client}/` |
+| Server config | `mem_techkb_write` | `30-servers/` |
+| General debugging | `mem_techkb_write` | `60-troubleshooting/` |
+| How-to guides | `mem_techkb_write` | `70-guides/` |
