@@ -55,10 +55,11 @@ async function main() {
     markBackgroundJobStarted(input.session_id);
 
     // Spawn background summarization script (don't await - fire and forget)
+    // Note: project_hint is passed for reference, but frontend (MCP) determines final project
     const backgroundInput = JSON.stringify({
       transcript_path: input.transcript_path,
       session_id: input.session_id,
-      project: session.project,
+      project_hint: session.project, // Hint only - may be wrong if cwd detection failed
       trigger: 'pre-compact',
       mem_folder: config.vault.memFolder,
     });

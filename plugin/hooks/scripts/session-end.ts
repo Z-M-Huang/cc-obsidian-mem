@@ -7,15 +7,17 @@
  *
  * Key design:
  * - Sessions are ephemeral - no vault persistence
- * - Spawns background script for AI summarization (if enabled)
- * - Cleans up session file from ~/.cc-obsidian-mem/sessions/
+ * - NO background summarization at session-end (no injection path exists)
+ * - Cleans up session file and pending items
+ *
+ * Note: Knowledge extraction only happens on /compact (pre-compact hook)
+ * where there's a subsequent message for pending injection.
  */
 
-import * as path from 'path';
-import { spawn } from 'child_process';
 import { loadConfig } from '../../src/shared/config.js';
 import { endSession, readSession, clearSessionFile } from '../../src/shared/session-store.js';
 import { readStdinJson } from './utils/helpers.js';
+import { clearPending } from './utils/pending.js';
 import type { SessionEndInput } from '../../src/shared/types.js';
 
 async function main() {
@@ -24,7 +26,6 @@ async function main() {
     const endType = (args.find(a => a.startsWith('--type='))?.split('=')[1] || 'end') as 'stop' | 'end';
 
     const input = await readStdinJson<SessionEndInput>();
-    const config = loadConfig();
 
     // Validate session_id from input
     if (!input.session_id) {
@@ -45,26 +46,14 @@ async function main() {
       return;
     }
 
-    // Spawn background script for AI summarization (if enabled and transcript available)
-    if (config.summarization.enabled && input.transcript_path) {
-      const backgroundInput = JSON.stringify({
-        transcript_path: input.transcript_path,
-        session_id: input.session_id,
-        project: session.project,
-        trigger: 'session-end',
-        mem_folder: config.vault.memFolder,
-      });
+    // Note: We intentionally do NOT spawn background summarization here.
+    // Session-end has no injection path - there's no subsequent message
+    // where we could inject pending items for Claude to write.
+    // Knowledge extraction only happens on /compact (pre-compact hook).
 
-      const scriptPath = path.join(__dirname, 'background-summarize.ts');
-
-      spawn('bun', ['run', scriptPath, backgroundInput], {
-        detached: true,
-        stdio: 'ignore',
-        cwd: path.dirname(scriptPath),
-      }).unref();
-
-      console.error('SessionEnd: Spawned background summarization');
-    }
+    // Clear any pending knowledge items that were never written
+    // (e.g., user ran /compact but didn't write the pending items before ending)
+    clearPending(input.session_id);
 
     // Clear the session file
     clearSessionFile(input.session_id);

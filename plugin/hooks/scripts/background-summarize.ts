@@ -9,7 +9,8 @@
  * Key design:
  * - Spawned by hooks with `detached: true` and `.unref()`
  * - Uses `claude -p` CLI (not Agent SDK) to avoid deadlock
- * - Writes results to Obsidian vault
+ * - Writes extracted knowledge to pending file (NOT vault)
+ * - Frontend (MCP tools) handles vault writes with correct project
  */
 
 import * as fs from 'fs';
@@ -17,14 +18,14 @@ import * as os from 'os';
 import * as path from 'path';
 import { spawn } from 'child_process';
 import { loadConfig } from '../../src/shared/config.js';
-import { VaultManager } from '../../src/mcp-server/utils/vault.js';
 import { parseTranscript, extractQAPairs, extractWebResearch } from '../../src/services/transcript.js';
-import { updatePreCompactKnowledge, markBackgroundJobCompleted } from '../../src/shared/session-store.js';
+import { markBackgroundJobCompleted } from '../../src/shared/session-store.js';
+import { writePending, type PendingItem } from './utils/pending.js';
 
 interface SummarizeInput {
   transcript_path: string;
   session_id: string;
-  project: string;
+  project_hint?: string; // Detected project (may be wrong, for reference only)
   trigger: 'pre-compact' | 'session-end';
   mem_folder: string;
 }
@@ -106,59 +107,37 @@ async function main() {
     }
 
     log('Calling claude -p for AI summarization...');
-    const knowledgeItems = await runClaudeP(contextText, input.project, config.summarization.model);
+    const knowledgeItems = await runClaudeP(contextText, config.summarization.model);
 
     if (!knowledgeItems || knowledgeItems.length === 0) {
-      log('AI summarization failed or returned empty - NOT creating any notes (no fallback)');
+      log('AI summarization failed or returned empty - no pending items created');
       if (input.trigger === 'pre-compact') markBackgroundJobCompleted(input.session_id);
       process.exit(0);
     }
 
     log(`AI extracted ${knowledgeItems.length} knowledge items`);
 
-    // Write knowledge to vault
-    if (knowledgeItems.length > 0) {
-      const vault = new VaultManager(config.vault.path, config.vault.memFolder);
+    // Write to pending file (NOT vault) - frontend will handle vault writes
+    const pendingItems: PendingItem[] = knowledgeItems.map((item) => ({
+      type: item.type,
+      title: item.title,
+      context: item.context,
+      content: item.summary,
+      keyPoints: item.keyPoints,
+      topics: item.topics,
+      sourceSession: input.session_id, // Preserve session provenance
+    }));
 
-      const knowledgePaths: string[] = [];
-      for (const item of knowledgeItems) {
-        try {
-          // Use writeKnowledge() which properly routes to project folders
-          const result = await vault.writeKnowledge(
-            {
-              type: item.type,
-              title: item.title,
-              context: item.context,
-              content: item.summary,
-              keyPoints: item.keyPoints,
-              topics: item.topics,
-              sourceSession: input.session_id,
-            },
-            input.project
-          );
-          knowledgePaths.push(result.path);
-          log(`Written knowledge note: ${result.path}`);
-        } catch (error) {
-          log(`ERROR writing knowledge note: ${error}`);
-        }
-      }
-
-      // Store paths for session-end to pick up (if triggered by pre-compact)
-      if (knowledgePaths.length > 0 && input.trigger === 'pre-compact') {
-        updatePreCompactKnowledge(input.session_id, knowledgePaths);
-        log(`Stored ${knowledgePaths.length} knowledge paths in session`);
-      }
-
-      log(`Background summarization complete: ${knowledgePaths.length} notes written`);
-    } else {
-      log('No knowledge items to write');
-    }
+    writePending(input.session_id, pendingItems, input.project_hint);
+    log(`Wrote ${pendingItems.length} items to pending file (project_hint: ${input.project_hint || 'none'})`);
 
     // Mark background job as completed (so session-end doesn't wait)
     if (input.trigger === 'pre-compact') {
       markBackgroundJobCompleted(input.session_id);
       log('Marked background job as completed');
     }
+
+    log('Background summarization complete');
 
   } catch (error) {
     log(`FATAL ERROR: ${error}`);
@@ -216,12 +195,9 @@ function buildContextForSummarization(
  */
 async function runClaudeP(
   contextText: string,
-  project: string,
   model: string
 ): Promise<KnowledgeResult[] | null> {
   const prompt = `You are analyzing a coding session conversation to extract valuable knowledge for future reference.
-
-Project: ${project}
 
 ${contextText}
 

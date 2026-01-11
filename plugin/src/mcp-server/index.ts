@@ -255,6 +255,92 @@ async function main() {
     }
   );
 
+  // Tool: mem_write_knowledge - Write knowledge extracted from conversations
+  server.registerTool(
+    "mem_write_knowledge",
+    {
+      title: "Write Knowledge Note",
+      description:
+        "Write knowledge extracted from conversations (Q&A, explanations, research, learnings). " +
+        "Routes research to /research folder, others to /knowledge. Sets knowledge_type in frontmatter for filtered searches.",
+      inputSchema: {
+        type: z
+          .enum(["qa", "explanation", "decision", "research", "learning"])
+          .describe(
+            "Type of knowledge: qa (question/answer), explanation (concept explained), decision (choice made), research (web/doc research), learning (insight/tip)"
+          ),
+        title: z.string().describe("Title for the knowledge note"),
+        context: z
+          .string()
+          .describe("When this knowledge is useful (1 sentence)"),
+        content: z
+          .string()
+          .describe("Main content/summary of the knowledge"),
+        keyPoints: z
+          .array(z.string())
+          .optional()
+          .describe("Key actionable points (2-5 items)"),
+        topics: z
+          .array(z.string())
+          .optional()
+          .describe("Topic tags for categorization (2-5 items)"),
+        project: z.string().describe("Project name to associate with"),
+        sourceUrl: z
+          .string()
+          .optional()
+          .describe("Source URL if from web research"),
+        sourceSession: z
+          .string()
+          .optional()
+          .describe("Session ID if from conversation"),
+      },
+    },
+    async ({
+      type,
+      title,
+      context,
+      content,
+      keyPoints,
+      topics,
+      project,
+      sourceUrl,
+      sourceSession,
+    }): Promise<ToolResult> => {
+      try {
+        const result = await vault.writeKnowledge(
+          {
+            type,
+            title,
+            context,
+            content,
+            keyPoints: keyPoints || [],
+            topics: topics || [],
+            sourceUrl,
+            sourceSession,
+          },
+          project
+        );
+
+        const folder = type === "research" ? "research" : "knowledge";
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Created ${type} note in ${folder}/: ${result.path}`,
+            },
+          ],
+        };
+      } catch (error) {
+        return {
+          content: [
+            { type: "text", text: `Failed to write knowledge: ${error}` },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
   // Tool: mem_supersede - Supersede an existing note with a new one
   server.registerTool(
     "mem_supersede",
