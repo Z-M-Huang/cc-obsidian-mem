@@ -63,10 +63,10 @@ When releasing a new version, update the version number in **all four files**:
 
 | File                                | Field                | Example              |
 | ----------------------------------- | -------------------- | -------------------- |
-| `plugin/package.json`               | `version`            | `"version": "0.5.1"` |
-| `plugin/.claude-plugin/plugin.json` | `version`            | `"version": "0.5.1"` |
-| `.claude-plugin/marketplace.json`   | `plugins[0].version` | `"version": "0.5.1"` |
-| `plugin/src/mcp-server/index.ts`    | `version`            | `version: "0.5.1"`   |
+| `plugin/package.json`               | `version`            | `"version": "0.5.2"` |
+| `plugin/.claude-plugin/plugin.json` | `version`            | `"version": "0.5.2"` |
+| `.claude-plugin/marketplace.json`   | `plugins[0].version` | `"version": "0.5.2"` |
+| `plugin/src/mcp-server/index.ts`    | `version`            | `version: "0.5.2"`   |
 
 ### Project Structure
 
@@ -147,6 +147,31 @@ claude /plugin list
 - Project detection searches up the directory tree for `.git` to find the repo root
 - Canvas auto-generation requires `canvas.enabled: true` in config
 - Canvases are regenerated at session-end when enabled (respects `updateStrategy`)
+
+### Logging Configuration
+
+To enable verbose debug logging, add to `~/.cc-obsidian-mem/config.json`:
+
+```json
+"logging": {
+  "verbose": true,
+  "logDir": "/custom/path"  // Optional, defaults to os.tmpdir()
+}
+```
+
+| Option    | Values         | Description                                      |
+| --------- | -------------- | ------------------------------------------------ |
+| `verbose` | `true`/`false` | Enable debug-level logging (default: `false`)    |
+| `logDir`  | path string    | Custom log directory (default: system temp dir)  |
+
+Log files:
+- **Hook logs**: `{logDir}/cc-obsidian-mem-{session_id}.log` (one per session, auto-cleaned after 24h)
+- **MCP server logs**: `{logDir}/cc-obsidian-mem-mcp.log` (shared, rotated at 10MB)
+
+View logs during a session:
+```bash
+tail -f /tmp/cc-obsidian-mem-*.log
+```
 
 ### Canvas Configuration
 

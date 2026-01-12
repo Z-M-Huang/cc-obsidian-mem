@@ -22,6 +22,7 @@ import { VaultManager } from '../../src/mcp-server/utils/vault.js';
 import { generateProjectCanvases, detectFolder, type CanvasNote } from '../../src/mcp-server/utils/canvas.js';
 import { readStdinJson } from './utils/helpers.js';
 import { clearPending } from './utils/pending.js';
+import { createLogger, cleanupOldLogs } from '../../src/shared/logger.js';
 import type { SessionEndInput } from '../../src/shared/types.js';
 
 async function main() {
@@ -30,33 +31,41 @@ async function main() {
     const endType = (args.find(a => a.startsWith('--type='))?.split('=')[1] || 'end') as 'stop' | 'end';
 
     const input = await readStdinJson<SessionEndInput>();
+    const logger = createLogger('session-end', input.session_id);
+
+    logger.debug('Session end hook triggered', { endType, session_id: input.session_id });
 
     // Validate session_id from input
     if (!input.session_id) {
-      console.error('No session_id provided');
+      logger.error('No session_id provided');
       return;
     }
 
     // Verify session exists and belongs to this session_id
     const existingSession = readSession(input.session_id);
     if (!existingSession) {
-      console.error(`Session not found: ${input.session_id}`);
+      logger.error(`Session not found: ${input.session_id}`);
       return;
     }
 
     // End the specific session by ID
     const session = endSession(input.session_id, endType);
     if (!session) {
+      logger.debug('endSession returned null');
       return;
     }
+
+    logger.info(`Session ended`, { project: session.project, endType, duration: session.durationMinutes });
 
     const config = loadConfig();
 
     // Generate/update project canvases if enabled
     if (config.canvas?.enabled) {
+      logger.debug('Canvas generation enabled', { updateStrategy: config.canvas.updateStrategy });
       try {
         const vault = new VaultManager(config.vault.path, config.vault.memFolder);
         const notes = await vault.getProjectNotes(session.project);
+        logger.debug('Retrieved project notes for canvas', { notesCount: notes.length });
 
         if (notes.length > 0) {
           const canvasNotes: CanvasNote[] = notes.map((note) => ({
@@ -85,12 +94,14 @@ async function main() {
           if (result.graph) generated.push('graph');
 
           if (generated.length > 0) {
-            console.error(`[cc-obsidian-mem] Updated ${generated.length} canvas(es): ${generated.join(', ')}`);
+            logger.info(`Updated ${generated.length} canvas(es): ${generated.join(', ')}`);
           }
         }
       } catch (canvasError) {
-        console.error(`[cc-obsidian-mem] Canvas generation failed: ${canvasError}`);
+        logger.error('Canvas generation failed', canvasError instanceof Error ? canvasError : undefined);
       }
+    } else {
+      logger.debug('Canvas generation disabled in config');
     }
 
     // Note: We intentionally do NOT spawn background summarization here.
@@ -101,14 +112,20 @@ async function main() {
     // Clear any pending knowledge items that were never written
     // (e.g., user ran /compact but didn't write the pending items before ending)
     clearPending(input.session_id);
+    logger.debug('Cleared pending knowledge items');
 
     // Clear the session file
     clearSessionFile(input.session_id);
+    logger.debug('Cleared session file');
 
-    console.error(`SessionEnd: Session ${input.session_id.substring(0, 8)} ended`);
+    // Cleanup old session log files (24+ hours old)
+    cleanupOldLogs(24);
+    logger.debug('Cleaned up old log files');
+
+    logger.info(`Session ${input.session_id.substring(0, 8)} ended successfully`);
 
   } catch (error) {
-    // Silently fail to not break Claude Code
+    // Silently fail to not break Claude Code (don't use logger here, might not be initialized)
     console.error('Session end hook error:', error);
   }
 }

@@ -7,6 +7,7 @@ import { loadConfig } from '../../src/shared/config.js';
 import { startSession } from '../../src/shared/session-store.js';
 import { VaultManager } from '../../src/mcp-server/utils/vault.js';
 import { getProjectInfo, readStdinJson } from './utils/helpers.js';
+import { createLogger } from '../../src/shared/logger.js';
 import type { SessionStartInput } from '../../src/shared/types.js';
 
 async function main() {
@@ -15,12 +16,17 @@ async function main() {
     const input = await readStdinJson<SessionStartInput>();
 
     const config = loadConfig();
+    const logger = createLogger('session-start', input.session_id);
+
+    logger.debug('Session start hook triggered', { session_id: input.session_id, cwd: input.cwd });
 
     // Get project info from git or directory
     const project = await getProjectInfo(input.cwd);
+    logger.debug('Project detected', { name: project.name, path: project.path, gitRemote: project.gitRemote });
 
     // Initialize session in file store
     startSession(input.session_id, project.name, input.cwd);
+    logger.info(`Session initialized for project: ${project.name}`);
 
     // Ensure vault structure exists for this project
     const vault = new VaultManager(config.vault.path, config.vault.memFolder);
@@ -30,6 +36,7 @@ async function main() {
     const pendingDir = path.join(os.homedir(), '.cc-obsidian-mem', 'pending');
     if (fs.existsSync(pendingDir)) {
       const pendingFiles = fs.readdirSync(pendingDir).filter(f => f.endsWith('.json'));
+      logger.debug('Checking for legacy pending files', { pendingDir, count: pendingFiles.length });
 
       for (const filename of pendingFiles) {
         const filePath = path.join(pendingDir, filename);
@@ -40,7 +47,7 @@ async function main() {
 
           // Skip if no project hint (matches main behavior)
           if (!projectHint) {
-            console.error(`[cc-obsidian-mem] Skipping legacy pending file ${filename}: no project_hint`);
+            logger.error(`Skipping legacy pending file ${filename}: no project_hint`);
             fs.unlinkSync(filePath);
             continue;
           }
@@ -93,18 +100,18 @@ async function main() {
 
             // Log invalid items
             if (invalidItems.length > 0) {
-              console.error(`[cc-obsidian-mem] Dropping ${invalidItems.length} invalid items from ${filename}`);
+              logger.error(`Dropping ${invalidItems.length} invalid items from ${filename}`);
             }
 
             if (validItems.length === 0) {
-              console.error(`[cc-obsidian-mem] No valid items in ${filename}, deleting`);
+              logger.error(`No valid items in ${filename}, deleting`);
               fs.unlinkSync(filePath);
               continue;
             }
 
             // writeKnowledgeBatch automatically creates project structure via writeKnowledge
             const paths = await vault.writeKnowledgeBatch(validItems, projectHint);
-            console.error(`[cc-obsidian-mem] Migrated ${paths.length}/${validItems.length} items from ${filename}`);
+            logger.info(`Migrated ${paths.length}/${validItems.length} items from ${filename}`);
 
             // Handle migration result
             if (paths.length === validItems.length) {
@@ -113,18 +120,18 @@ async function main() {
             } else if (paths.length > 0) {
               // Partial success - delete file anyway (can't identify which failed)
               // Accepted data loss: writeKnowledgeBatch returns paths but not failure indices
-              console.error(`[cc-obsidian-mem] Partial migration for ${filename}, ${validItems.length - paths.length} items lost`);
+              logger.error(`Partial migration for ${filename}, ${validItems.length - paths.length} items lost`);
               fs.unlinkSync(filePath);
             } else {
               // All items failed - retain file for debugging
-              console.error(`[cc-obsidian-mem] Migration failed for ${filename}, file retained`);
+              logger.error(`Migration failed for ${filename}, file retained`);
             }
           } else {
             // Empty pending file, just delete
             fs.unlinkSync(filePath);
           }
         } catch (error) {
-          console.error(`[cc-obsidian-mem] Failed to migrate ${filename}:`, error);
+          logger.error(`Failed to migrate ${filename}`, error instanceof Error ? error : undefined);
           // Don't delete on error - preserve for debugging
         }
       }
@@ -132,6 +139,13 @@ async function main() {
 
     // If context injection is enabled, get relevant context from vault
     if (config.contextInjection.enabled) {
+      logger.debug('Context injection enabled', {
+        includeErrors: config.contextInjection.includeRelatedErrors,
+        includeDecisions: true,
+        includePatterns: config.contextInjection.includeProjectPatterns,
+        maxTokens: config.contextInjection.maxTokens,
+      });
+
       try {
         const context = await vault.getProjectContext(project.name, {
           includeErrors: config.contextInjection.includeRelatedErrors,
@@ -139,17 +153,27 @@ async function main() {
           includePatterns: config.contextInjection.includeProjectPatterns,
         });
 
+        logger.debug('Project context retrieved', {
+          errorsCount: context.unresolvedErrors.length,
+          decisionsCount: context.activeDecisions.length,
+          patternsCount: context.patterns.length,
+        });
+
         // Format and output context if there's anything useful
         const formatted = formatProjectContext(context, config.contextInjection.maxTokens);
         if (formatted) {
           console.log(formatted);
+          logger.info('Context injected into session');
         }
-      } catch {
+      } catch (error) {
+        logger.error('Failed to inject context', error instanceof Error ? error : undefined);
         // Silently skip context injection on error
       }
+    } else {
+      logger.debug('Context injection disabled in config');
     }
   } catch (error) {
-    // Silently fail to not break Claude Code
+    // Silently fail to not break Claude Code (don't use logger here, might not be initialized)
     console.error('Session start hook error:', error);
   }
 }

@@ -36,6 +36,10 @@ const DEFAULT_CONFIG: Config = {
     autoGenerate: false,  // Don't auto-generate on mem_project_context
     updateStrategy: 'skip', // Don't overwrite existing canvases
   },
+  logging: {
+    verbose: false,      // OFF by default - enables debug logging when true
+    logDir: os.tmpdir(), // Default to system temp directory
+  },
 };
 
 let cachedConfig: Config | null = null;
@@ -151,6 +155,9 @@ function deepMerge(target: Config, source: Partial<Config>): Config {
   }
   if (source.canvas) {
     result.canvas = { ...result.canvas, ...source.canvas };
+  }
+  if (source.logging) {
+    result.logging = { ...result.logging, ...source.logging };
   }
 
   return result;

@@ -64,6 +64,9 @@ The wizard will prompt you for your Obsidian vault path and create the config fi
     "path": "/path/to/your/obsidian/vault",
     "memFolder": "_claude-mem"
   },
+  "logging": {
+    "verbose": false
+  },
   "capture": {
     "fileEdits": true,
     "bashCommands": true,
@@ -311,8 +314,33 @@ Notes follow a hierarchical linking structure for Obsidian graph navigation:
 
 1. Verify `summarization.enabled` is `true` in config
 2. Check model is valid: `sonnet`, `opus`, or `haiku`
-3. View background log: `cat /tmp/cc-obsidian-mem-background.log` (Linux/Mac) or `%TEMP%\cc-obsidian-mem-background.log` (Windows)
+3. Enable verbose logging and check logs (see below)
 4. Ensure Claude CLI is available: `which claude`
+
+### Debugging with verbose logging
+
+Enable verbose logging in `~/.cc-obsidian-mem/config.json`:
+
+```json
+"logging": {
+  "verbose": true
+}
+```
+
+Then view logs during a session:
+
+```bash
+# Watch all logs in real-time
+tail -f /tmp/cc-obsidian-mem-*.log
+
+# View session-specific log
+tail -f /tmp/cc-obsidian-mem-{session_id}.log
+
+# View MCP server log
+tail -f /tmp/cc-obsidian-mem-mcp.log
+```
+
+Log files are automatically cleaned up after 24 hours. The MCP server log is rotated at 10MB.
 
 ### Claude not using memory tools proactively
 

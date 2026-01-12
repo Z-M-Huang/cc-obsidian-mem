@@ -11,6 +11,7 @@ import {
   extractErrorInfo,
   readStdinJson,
 } from './utils/helpers.js';
+import { createLogger } from '../../src/shared/logger.js';
 import type { PostToolUseInput, Observation, ErrorData } from '../../src/shared/types.js';
 import { extractToolKnowledge } from '../../src/services/knowledge-extractor.js';
 import { sanitizeProjectName } from '../../src/shared/config.js';
@@ -22,60 +23,73 @@ async function main() {
   try {
     const input = await readStdinJson<PostToolUseInput>();
     const config = loadConfig();
+    const logger = createLogger('post-tool-use', input.session_id);
+
+    logger.debug('Post-tool-use hook triggered', { tool: input.tool_name, isError: input.tool_response.isError });
 
     // Validate session_id from input
     if (!input.session_id) {
+      logger.debug('No session_id in input, skipping');
       return;
     }
 
     // Check if we have an active session for this session_id
     const session = readSession(input.session_id);
     if (!session || session.status !== 'active') {
+      logger.debug('Session not found or inactive', { sessionExists: !!session, status: session?.status });
       return;
     }
 
     // Handle knowledge-producing tools FIRST (before shouldCapture/isSignificantAction filters)
     // These tools don't need to pass the observation filters
     if (isKnowledgeTool(input.tool_name)) {
+      logger.debug('Knowledge-producing tool detected', { tool: input.tool_name });
       // Check if tool failed - still record as error
       if (input.tool_response.isError) {
+        logger.info('Knowledge tool failed, recording error', { tool: input.tool_name });
         const errorObservation = buildErrorObservation(input);
         addObservation(input.session_id, errorObservation);
         await processError(errorObservation, session.project, session.id, config);
       } else {
         // Only extract knowledge from successful responses
-        await processKnowledgeTool(input, session.project, session.id, config);
+        await processKnowledgeTool(input, session.project, session.id, config, logger);
       }
       return;
     }
 
     // Filter based on configuration (for file edits, bash commands)
     if (!shouldCapture(input.tool_name, config)) {
+      logger.debug('Tool not configured for capture', { tool: input.tool_name });
       return;
     }
 
     // Check if action is significant enough to capture
     if (!isSignificantAction(input)) {
+      logger.debug('Action not significant, skipping', { tool: input.tool_name });
       return;
     }
 
     // Build observation based on tool type
     const observation = buildObservation(input, config);
+    logger.debug('Observation built', { type: observation.type, tool: observation.tool });
 
     // Add to session file using the session_id from input
     addObservation(input.session_id, observation);
+    logger.info('Observation recorded', { type: observation.type, tool: observation.tool });
 
     // Handle errors specially - create/update error notes in vault
     if (observation.type === 'error' || observation.isError) {
+      logger.info('Processing error observation');
       await processError(observation, session.project, session.id, config);
     }
 
     // Handle file edits - update file knowledge
     if (observation.type === 'file_edit') {
+      logger.info('Processing file edit observation');
       await processFileEdit(observation, session.project, session.id, config);
     }
   } catch (error) {
-    // Silently fail to not break Claude Code
+    // Silently fail to not break Claude Code (don't use logger here, might not be initialized)
     console.error('Post tool use hook error:', error);
   }
 }
@@ -98,10 +112,14 @@ async function processKnowledgeTool(
   input: PostToolUseInput,
   project: string,
   sessionId: string,
-  config: ReturnType<typeof loadConfig>
+  config: ReturnType<typeof loadConfig>,
+  logger: ReturnType<typeof createLogger>
 ): Promise<void> {
   // Skip if summarization is disabled
-  if (!config.summarization.enabled) return;
+  if (!config.summarization.enabled) {
+    logger.debug('Summarization disabled, skipping knowledge extraction');
+    return;
+  }
 
   // Extract tool output text
   const outputText = input.tool_response.content
@@ -109,7 +127,12 @@ async function processKnowledgeTool(
     .map(c => c.text)
     .join('\n');
 
-  if (!outputText || outputText.length < 100) return;
+  if (!outputText || outputText.length < 100) {
+    logger.debug('Output too short for knowledge extraction', { length: outputText.length });
+    return;
+  }
+
+  logger.debug('Extracting knowledge from tool output', { tool: input.tool_name, outputLength: outputText.length });
 
   try {
     // Extract knowledge from tool output
@@ -124,9 +147,12 @@ async function processKnowledgeTool(
       // Store knowledge in vault
       const vault = new VaultManager(config.vault.path, config.vault.memFolder);
       await vault.writeKnowledge(knowledge, project);
+      logger.info('Knowledge extracted and stored', { type: knowledge.type, title: knowledge.title });
+    } else {
+      logger.debug('No knowledge extracted from tool output');
     }
   } catch (error) {
-    console.error('Failed to extract knowledge from tool:', error);
+    logger.error('Failed to extract knowledge from tool', error instanceof Error ? error : undefined);
   }
 }
 

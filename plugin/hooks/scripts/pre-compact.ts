@@ -17,6 +17,7 @@ import { spawn } from 'child_process';
 import { loadConfig } from '../../src/shared/config.js';
 import { readSession, markBackgroundJobStarted } from '../../src/shared/session-store.js';
 import { readStdinJson } from './utils/helpers.js';
+import { createLogger } from '../../src/shared/logger.js';
 
 interface PreCompactInput {
   session_id: string;
@@ -30,29 +31,37 @@ async function main() {
   try {
     const input = await readStdinJson<PreCompactInput>();
     const config = loadConfig();
+    const logger = createLogger('pre-compact', input.session_id);
+
+    logger.debug('Pre-compact hook triggered', { trigger: input.trigger, session_id: input.session_id });
 
     // Skip if summarization is disabled
     if (!config.summarization.enabled) {
+      logger.debug('Summarization disabled, skipping background job');
       return;
     }
 
     // Validate session
     if (!input.session_id) {
+      logger.debug('No session_id in input, skipping');
       return;
     }
 
     const session = readSession(input.session_id);
     if (!session) {
+      logger.debug('Session not found, skipping');
       return;
     }
 
     // Validate transcript path
     if (!input.transcript_path) {
+      logger.debug('No transcript_path in input, skipping');
       return;
     }
 
     // Mark that a background job is starting (so session-end knows to wait)
     markBackgroundJobStarted(input.session_id);
+    logger.debug('Marked background job as started');
 
     // Spawn background summarization script (don't await - fire and forget)
     // Note: project_hint is passed for reference, but frontend (MCP) determines final project
@@ -72,11 +81,10 @@ async function main() {
       cwd: path.dirname(scriptPath),
     }).unref();            // Allow hook to exit without waiting
 
-    // Log that we spawned the background process
-    console.error(`PreCompact: Spawned background summarization for ${input.trigger} compact`);
+    logger.info(`Spawned background summarization for ${input.trigger} compact`, { project: session.project });
 
   } catch (error) {
-    // Silently fail to not break Claude Code
+    // Silently fail to not break Claude Code (don't use logger here, might not be initialized)
     console.error('PreCompact hook error:', error);
   }
 }

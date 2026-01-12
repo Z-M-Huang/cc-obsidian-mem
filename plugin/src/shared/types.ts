@@ -32,6 +32,17 @@ export interface Config {
     includeProjectPatterns: boolean;
   };
   canvas?: CanvasConfig;
+  logging?: LoggingConfig;
+}
+
+/**
+ * Logging configuration for debug/verbose output
+ */
+export interface LoggingConfig {
+  /** Enable verbose debug logging (default: false) */
+  verbose: boolean;
+  /** Custom log directory (default: os.tmpdir()) */
+  logDir?: string;
 }
 
 /**

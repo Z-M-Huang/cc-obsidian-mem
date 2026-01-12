@@ -20,6 +20,7 @@ import { loadConfig } from '../../src/shared/config.js';
 import { parseTranscript, extractQAPairs, extractWebResearch } from '../../src/services/transcript.js';
 import { markBackgroundJobCompleted } from '../../src/shared/session-store.js';
 import { VaultManager } from '../../src/mcp-server/utils/vault.js';
+import { createLogger } from '../../src/shared/logger.js';
 
 interface SummarizeInput {
   transcript_path: string;
@@ -38,24 +39,11 @@ interface KnowledgeResult {
   topics: string[];
 }
 
-// Log file for debugging background script issues (cross-platform)
-const LOG_FILE = path.join(os.tmpdir(), 'cc-obsidian-mem-background.log');
-
-function log(message: string) {
-  try {
-    const timestamp = new Date().toISOString();
-    const line = `[${timestamp}] ${message}\n`;
-    fs.appendFileSync(LOG_FILE, line);
-  } catch {
-    // Silently fail if logging fails (e.g., permission issues)
-  }
-}
-
 async function main() {
   // Parse input from command line argument (outside try for catch access)
   const inputArg = process.argv[2];
   if (!inputArg) {
-    log('ERROR: No input argument provided');
+    console.error('[background-summarize] ERROR: No input argument provided');
     process.exit(1);
   }
 
@@ -63,18 +51,21 @@ async function main() {
   try {
     input = JSON.parse(inputArg);
   } catch (parseError) {
-    log(`ERROR: Failed to parse input: ${parseError}`);
+    console.error(`[background-summarize] ERROR: Failed to parse input: ${parseError}`);
     process.exit(1);
   }
 
+  // Create logger with session ID
+  const logger = createLogger('background-summarize', input.session_id);
+
   try {
-    log(`Starting background summarization for session ${input.session_id}`);
+    logger.info(`Starting background summarization for session ${input.session_id}`);
 
     const config = loadConfig();
 
     // Check if transcript exists
     if (!fs.existsSync(input.transcript_path)) {
-      log(`ERROR: Transcript not found: ${input.transcript_path}`);
+      logger.error(`Transcript not found: ${input.transcript_path}`);
       if (input.trigger === 'pre-compact') markBackgroundJobCompleted(input.session_id);
       process.exit(1);
     }
@@ -82,44 +73,44 @@ async function main() {
     // Parse transcript
     const conversation = parseTranscript(input.transcript_path);
     if (conversation.turns.length === 0) {
-      log('No conversation turns found, exiting');
+      logger.info('No conversation turns found, exiting');
       if (input.trigger === 'pre-compact') markBackgroundJobCompleted(input.session_id);
       process.exit(0);
     }
 
-    log(`Parsed ${conversation.turns.length} conversation turns`);
+    logger.info(`Parsed ${conversation.turns.length} conversation turns`);
 
     // Build context for AI summarization
     const qaPairs = extractQAPairs(conversation);
     const research = extractWebResearch(conversation);
 
-    log(`Found ${qaPairs.length} Q&A pairs, ${research.length} research items`);
+    logger.info(`Found ${qaPairs.length} Q&A pairs, ${research.length} research items`);
 
     // Build context - will use conversation fallback if no Q&A or research
     const contextText = buildContextForSummarization(qaPairs, research, conversation);
 
     // Skip if context is too short for meaningful summarization
     if (contextText.length < 500) {
-      log('Context too short for meaningful summarization, skipping');
+      logger.info('Context too short for meaningful summarization, skipping');
       if (input.trigger === 'pre-compact') markBackgroundJobCompleted(input.session_id);
       process.exit(0);
     }
 
     const timeout = config.summarization.timeout || 180000; // Default 3 minutes
-    log('Calling claude -p for AI summarization...');
-    const knowledgeItems = await runClaudeP(contextText, config.summarization.model, timeout);
+    logger.info('Calling claude -p for AI summarization...');
+    const knowledgeItems = await runClaudeP(contextText, config.summarization.model, timeout, logger);
 
     if (!knowledgeItems || knowledgeItems.length === 0) {
-      log('AI summarization failed or returned empty - no pending items created');
+      logger.info('AI summarization failed or returned empty - no pending items created');
       if (input.trigger === 'pre-compact') markBackgroundJobCompleted(input.session_id);
       process.exit(0);
     }
 
-    log(`AI extracted ${knowledgeItems.length} knowledge items`);
+    logger.info(`AI extracted ${knowledgeItems.length} knowledge items`);
 
     // Write knowledge directly to vault (skip if no project detected)
     if (!input.project_hint) {
-      log('WARNING: No project detected, skipping knowledge write to vault');
+      logger.error('No project detected, skipping knowledge write to vault');
     } else {
       try {
         const VALID_TYPES = ['qa', 'explanation', 'decision', 'research', 'learning'];
@@ -143,7 +134,7 @@ async function main() {
           const hasValidType = VALID_TYPES.includes(typeStr);
 
           if (!hasRequiredFields || !hasValidType) {
-            log(`Skipping invalid AI item: type=${String(item.type).substring(0, 20)}, title=${String(item.title).substring(0, 30)}`);
+            logger.debug(`Skipping invalid AI item: type=${String(item.type).substring(0, 20)}, title=${String(item.title).substring(0, 30)}`);
             continue;
           }
 
@@ -167,27 +158,27 @@ async function main() {
         }
 
         if (validItems.length === 0) {
-          log('No valid knowledge items to write');
+          logger.info('No valid knowledge items to write');
         } else {
           const vault = new VaultManager(config.vault.path, config.vault.memFolder);
           const paths = await vault.writeKnowledgeBatch(validItems, input.project_hint);
-          log(`Wrote ${paths.length}/${validItems.length} knowledge notes to vault`);
+          logger.info(`Wrote ${paths.length}/${validItems.length} knowledge notes to vault`);
         }
       } catch (error) {
-        log(`ERROR: Failed to write knowledge to vault: ${error}`);
+        logger.error(`Failed to write knowledge to vault`, error instanceof Error ? error : undefined);
       }
     }
 
     // Mark background job as completed (so session-end doesn't wait)
     if (input.trigger === 'pre-compact') {
       markBackgroundJobCompleted(input.session_id);
-      log('Marked background job as completed');
+      logger.debug('Marked background job as completed');
     }
 
-    log('Background summarization complete');
+    logger.info('Background summarization complete');
 
   } catch (error) {
-    log(`FATAL ERROR: ${error}`);
+    logger.error(`FATAL ERROR in background summarization`, error instanceof Error ? error : undefined);
     // Still mark as completed on error so session-end doesn't wait forever
     if (input?.trigger === 'pre-compact' && input?.session_id) {
       markBackgroundJobCompleted(input.session_id);
@@ -243,7 +234,8 @@ function buildContextForSummarization(
 async function runClaudeP(
   contextText: string,
   model: string,
-  timeout: number
+  timeout: number,
+  logger: ReturnType<typeof createLogger>
 ): Promise<KnowledgeResult[] | null> {
   const prompt = `You are analyzing a coding session conversation to extract valuable knowledge for future reference.
 
@@ -270,10 +262,6 @@ If nothing significant to extract, return an empty array [].
 Respond with ONLY valid JSON, no markdown code blocks, no explanation.`;
 
   return new Promise((resolve) => {
-    // Write prompt to temp file to avoid shell escaping issues (cross-platform)
-    const promptFile = path.join(os.tmpdir(), `claude-prompt-${Date.now()}.txt`);
-    fs.writeFileSync(promptFile, prompt);
-
     const proc = spawn('claude', [
       '-p',
       '--model', model || 'haiku',
@@ -300,7 +288,7 @@ Respond with ONLY valid JSON, no markdown code blocks, no explanation.`;
     // Timeout (cleared on completion)
     const timeoutId = setTimeout(() => {
       proc.kill();
-      log(`claude -p timed out after ${timeout / 1000} seconds`);
+      logger.error(`claude -p timed out after ${timeout / 1000} seconds`);
       resolve(null);
     }, timeout);
 
@@ -308,13 +296,11 @@ Respond with ONLY valid JSON, no markdown code blocks, no explanation.`;
       // Clear timeout since process completed
       clearTimeout(timeoutId);
 
-      // Clean up temp file
-      try { fs.unlinkSync(promptFile); } catch {}
-
       if (code !== 0) {
-        log(`claude -p exited with code ${code}`);
-        log(`stderr: ${stderr || '(empty)'}`);
-        log(`stdout (first 500): ${stdout.substring(0, 500) || '(empty)'}`);
+        logger.error(`claude -p exited with code ${code}`);
+        // Pass raw output through context for proper sanitization
+        logger.debug('stderr', { stderr: stderr || '(empty)' });
+        logger.debug('stdout (first 500)', { stdout: stdout.substring(0, 500) || '(empty)' });
         resolve(null);
         return;
       }
@@ -334,18 +320,20 @@ Respond with ONLY valid JSON, no markdown code blocks, no explanation.`;
         if (Array.isArray(parsed)) {
           resolve(parsed as KnowledgeResult[]);
         } else {
-          log(`Unexpected response format: ${typeof parsed}`);
+          logger.error(`Unexpected response format: ${typeof parsed}`);
           resolve(null);
         }
       } catch (error) {
-        log(`Failed to parse claude -p output: ${error}\nOutput: ${stdout.substring(0, 500)}`);
+        // Pass raw output through context for proper sanitization
+        logger.error(`Failed to parse claude -p output`, error instanceof Error ? error : undefined);
+        logger.debug('Raw output (first 500)', { stdout: stdout.substring(0, 500) });
         resolve(null);
       }
     });
 
     proc.on('error', (error) => {
       clearTimeout(timeoutId);
-      log(`Failed to spawn claude -p: ${error}`);
+      logger.error(`Failed to spawn claude -p: ${error}`);
       resolve(null);
     });
   });

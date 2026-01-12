@@ -5,6 +5,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import * as z from "zod";
 import { VaultManager } from "./utils/vault.js";
 import { loadConfig, getProjectPath } from "../shared/config.js";
+import { createLogger } from "../shared/logger.js";
 import type { SearchResult, ProjectContext, Note } from "../shared/types.js";
 import {
   generateProjectCanvases,
@@ -19,13 +20,16 @@ type ToolResult = { content: TextContent[]; isError?: boolean };
 async function main() {
   const config = loadConfig();
   const vault = new VaultManager(config.vault.path, config.vault.memFolder);
+  const logger = createLogger('mcp-server'); // No session ID for MCP server
+
+  logger.info('MCP server starting');
 
   // Ensure vault structure exists
   await vault.ensureStructure();
 
   const server = new McpServer({
     name: "obsidian-mem",
-    version: "0.5.1",
+    version: "0.5.2",
   });
 
   // Tool: mem_search - Search the knowledge base
@@ -58,6 +62,7 @@ async function main() {
       },
     },
     async ({ query, project, type, tags, limit }): Promise<ToolResult> => {
+      logger.debug('mem_search called', { queryLength: query.length, project, type, tagsCount: tags?.length, limit });
       try {
         // Map NoteType to knowledge_type for knowledge search
         // 'knowledge' type searches ALL knowledge types (qa, explanation, decision, research, learning)
