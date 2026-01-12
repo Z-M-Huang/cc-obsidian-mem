@@ -22,6 +22,8 @@ export interface Config {
     model: string; // Agent SDK model: 'sonnet', 'opus', 'haiku', or full model ID
     sessionSummary: boolean;
     errorSummary: boolean;
+    /** Timeout in milliseconds for claude -p summarization (default: 180000 = 3 minutes) */
+    timeout?: number;
   };
   contextInjection: {
     enabled: boolean;

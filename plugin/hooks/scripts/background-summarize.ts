@@ -105,8 +105,9 @@ async function main() {
       process.exit(0);
     }
 
+    const timeout = config.summarization.timeout || 180000; // Default 3 minutes
     log('Calling claude -p for AI summarization...');
-    const knowledgeItems = await runClaudeP(contextText, config.summarization.model);
+    const knowledgeItems = await runClaudeP(contextText, config.summarization.model, timeout);
 
     if (!knowledgeItems || knowledgeItems.length === 0) {
       log('AI summarization failed or returned empty - no pending items created');
@@ -241,7 +242,8 @@ function buildContextForSummarization(
  */
 async function runClaudeP(
   contextText: string,
-  model: string
+  model: string,
+  timeout: number
 ): Promise<KnowledgeResult[] | null> {
   const prompt = `You are analyzing a coding session conversation to extract valuable knowledge for future reference.
 
@@ -295,7 +297,17 @@ Respond with ONLY valid JSON, no markdown code blocks, no explanation.`;
       stderr += data.toString();
     });
 
+    // Timeout (cleared on completion)
+    const timeoutId = setTimeout(() => {
+      proc.kill();
+      log(`claude -p timed out after ${timeout / 1000} seconds`);
+      resolve(null);
+    }, timeout);
+
     proc.on('close', (code) => {
+      // Clear timeout since process completed
+      clearTimeout(timeoutId);
+
       // Clean up temp file
       try { fs.unlinkSync(promptFile); } catch {}
 
@@ -332,16 +344,10 @@ Respond with ONLY valid JSON, no markdown code blocks, no explanation.`;
     });
 
     proc.on('error', (error) => {
+      clearTimeout(timeoutId);
       log(`Failed to spawn claude -p: ${error}`);
       resolve(null);
     });
-
-    // Timeout after 2 minutes
-    setTimeout(() => {
-      proc.kill();
-      log('claude -p timed out after 2 minutes');
-      resolve(null);
-    }, 120000);
   });
 }
 

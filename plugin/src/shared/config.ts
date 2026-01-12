@@ -23,6 +23,7 @@ const DEFAULT_CONFIG: Config = {
     model: 'sonnet', // Agent SDK uses simple names: 'sonnet', 'opus', 'haiku'
     sessionSummary: true,
     errorSummary: true,
+    timeout: 180000, // 3 minutes default
   },
   contextInjection: {
     enabled: true,
