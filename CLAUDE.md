@@ -63,10 +63,10 @@ When releasing a new version, update the version number in **all four files**:
 
 | File                                | Field                | Example              |
 | ----------------------------------- | -------------------- | -------------------- |
-| `plugin/package.json`               | `version`            | `"version": "0.5.3"` |
-| `plugin/.claude-plugin/plugin.json` | `version`            | `"version": "0.5.3"` |
-| `.claude-plugin/marketplace.json`   | `plugins[0].version` | `"version": "0.5.3"` |
-| `plugin/src/mcp-server/index.ts`    | `version`            | `version: "0.5.3"`   |
+| `plugin/package.json`               | `version`            | `"version": "0.5.4"` |
+| `plugin/.claude-plugin/plugin.json` | `version`            | `"version": "0.5.4"` |
+| `.claude-plugin/marketplace.json`   | `plugins[0].version` | `"version": "0.5.4"` |
+| `plugin/src/mcp-server/index.ts`    | `version`            | `version: "0.5.4"`   |
 
 ### Project Structure
 

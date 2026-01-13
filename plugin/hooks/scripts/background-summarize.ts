@@ -16,7 +16,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { spawn } from 'child_process';
-import { loadConfig } from '../../src/shared/config.js';
+import { loadConfig, sanitizeProjectName } from '../../src/shared/config.js';
 import { parseTranscript, extractQAPairs, extractWebResearch } from '../../src/services/transcript.js';
 import { markBackgroundJobCompleted } from '../../src/shared/session-store.js';
 import { VaultManager } from '../../src/mcp-server/utils/vault.js';
@@ -37,6 +37,7 @@ interface KnowledgeResult {
   summary: string;
   keyPoints: string[];
   topics: string[];
+  relevance?: 'project' | 'skip';
 }
 
 async function main() {
@@ -96,9 +97,20 @@ async function main() {
       process.exit(0);
     }
 
+    // Normalize project_hint: trim, sanitize (strip control chars), treat empty as missing
+    const rawProjectHint = typeof input.project_hint === 'string' ? input.project_hint.trim() : '';
+    const projectName = rawProjectHint ? sanitizeProjectName(rawProjectHint) : '';
+
+    // Skip if no project detected - cannot classify relevance without project context
+    if (!projectName) {
+      logger.info('No project detected, skipping knowledge extraction');
+      if (input.trigger === 'pre-compact') markBackgroundJobCompleted(input.session_id);
+      process.exit(0);
+    }
+
     const timeout = config.summarization.timeout || 180000; // Default 3 minutes
     logger.info('Calling claude -p for AI summarization...');
-    const knowledgeItems = await runClaudeP(contextText, config.summarization.model, timeout, logger);
+    const knowledgeItems = await runClaudeP(contextText, projectName, config.summarization.model, timeout, logger);
 
     if (!knowledgeItems || knowledgeItems.length === 0) {
       logger.info('AI summarization failed or returned empty - no pending items created');
@@ -108,12 +120,13 @@ async function main() {
 
     logger.info(`AI extracted ${knowledgeItems.length} knowledge items`);
 
-    // Write knowledge directly to vault (skip if no project detected)
-    if (!input.project_hint) {
-      logger.error('No project detected, skipping knowledge write to vault');
-    } else {
-      try {
+    // Filter and write knowledge to vault
+    try {
         const VALID_TYPES = ['qa', 'explanation', 'decision', 'research', 'learning'];
+        const isWorkingOnMemPlugin = projectName.toLowerCase().includes('cc-obsidian-mem');
+
+        let skippedByAI = 0;
+        let skippedByGuardrail = 0;
 
         // Filter and map valid items (with type guards for malformed AI output)
         const validItems: Array<{
@@ -138,6 +151,15 @@ async function main() {
             continue;
           }
 
+          // Normalize and validate relevance field
+          let relevance: 'project' | 'skip' = 'project'; // Default: keep
+          if (item.relevance) {
+            const normalized = (typeof item.relevance === 'string' ? item.relevance.trim().toLowerCase() : '');
+            if (normalized === 'project' || normalized === 'skip') {
+              relevance = normalized;
+            }
+          }
+
           // Filter arrays to only string items to prevent writeKnowledge failures
           const keyPoints = Array.isArray(item.keyPoints)
             ? item.keyPoints.filter((k: unknown) => typeof k === 'string')
@@ -145,6 +167,40 @@ async function main() {
           const topics = Array.isArray(item.topics)
             ? item.topics.filter((t: unknown) => typeof t === 'string')
             : [];
+
+          // Deterministic guardrail: force-skip cc-obsidian-mem mentions when working on other projects
+          const contextStr = typeof item.context === 'string' ? item.context : '';
+          if (!isWorkingOnMemPlugin && relevance === 'project') {
+            const mentionsMemPlugin = (
+              (topics || []).some(t => t.toLowerCase().includes('cc-obsidian-mem')) ||
+              titleStr.toLowerCase().includes('cc-obsidian-mem') ||
+              summaryStr.toLowerCase().includes('cc-obsidian-mem') ||
+              contextStr.toLowerCase().includes('cc-obsidian-mem') ||
+              keyPoints.some(k => k.toLowerCase().includes('cc-obsidian-mem'))
+            );
+
+            if (mentionsMemPlugin) {
+              relevance = 'skip';
+              skippedByGuardrail++;
+              logger.debug(`Guardrail skipped: "${titleStr.substring(0, 50)}" (mentions cc-obsidian-mem)`);
+            }
+          }
+
+          // Skip items marked as irrelevant
+          if (relevance === 'skip') {
+            // Count AI skips separately from guardrail skips
+            // Guardrail already incremented skippedByGuardrail above
+            // Only count as AI skip if guardrail didn't trigger (check original value)
+            const originalRelevance = item.relevance ?
+              (typeof item.relevance === 'string' ? item.relevance.trim().toLowerCase() : '') : '';
+            const wasSkippedByAI = originalRelevance === 'skip';
+
+            if (wasSkippedByAI) {
+              skippedByAI++;
+              logger.debug(`Skipped by AI: "${titleStr.substring(0, 50)}"`);
+            }
+            continue;
+          }
 
           validItems.push({
             type: typeStr as 'qa' | 'explanation' | 'decision' | 'research' | 'learning',
@@ -157,17 +213,18 @@ async function main() {
           });
         }
 
+        logger.info(`Processed ${knowledgeItems.length} items: ${validItems.length} kept, ${skippedByAI + skippedByGuardrail} skipped (${skippedByAI} by AI, ${skippedByGuardrail} by guardrail)`);
+
         if (validItems.length === 0) {
           logger.info('No valid knowledge items to write');
         } else {
           const vault = new VaultManager(config.vault.path, config.vault.memFolder);
-          const paths = await vault.writeKnowledgeBatch(validItems, input.project_hint);
+          const paths = await vault.writeKnowledgeBatch(validItems, projectName);
           logger.info(`Wrote ${paths.length}/${validItems.length} knowledge notes to vault`);
         }
       } catch (error) {
         logger.error(`Failed to write knowledge to vault`, error instanceof Error ? error : undefined);
       }
-    }
 
     // Mark background job as completed (so session-end doesn't wait)
     if (input.trigger === 'pre-compact') {
@@ -233,11 +290,14 @@ function buildContextForSummarization(
  */
 async function runClaudeP(
   contextText: string,
+  projectName: string,
   model: string,
   timeout: number,
   logger: ReturnType<typeof createLogger>
 ): Promise<KnowledgeResult[] | null> {
   const prompt = `You are analyzing a coding session conversation to extract valuable knowledge for future reference.
+
+**Project**: ${projectName}
 
 ${contextText}
 
@@ -255,6 +315,15 @@ For each item, provide:
 - summary: key information (max 100 words)
 - keyPoints: array of actionable points (2-5 items)
 - topics: array of relevant topic tags (2-5 items)
+- relevance: REQUIRED - classify as either "project" or "skip"
+  - "project" = knowledge directly about ${projectName}'s codebase, APIs, architecture, or project-specific patterns
+  - "skip" = meta-tooling discussions (e.g., how to use cc-obsidian-mem when working on other projects), or general programming knowledge not specific to this project
+
+**Examples of relevance classification**:
+- If working on "my-app" and discussing "my-app's authentication flow" → relevance: "project"
+- If working on "my-app" but discussing "how to use cc-obsidian-mem memory tools" → relevance: "skip"
+- If working on "my-app" but discussing "general JavaScript patterns" → relevance: "skip"
+- If working on "cc-obsidian-mem" and discussing "cc-obsidian-mem architecture" → relevance: "project"
 
 Return a JSON array. Only include genuinely useful items worth remembering.
 If nothing significant to extract, return an empty array [].
@@ -298,9 +367,8 @@ Respond with ONLY valid JSON, no markdown code blocks, no explanation.`;
 
       if (code !== 0) {
         logger.error(`claude -p exited with code ${code}`);
-        // Pass raw output through context for proper sanitization
-        logger.debug('stderr', { stderr: stderr || '(empty)' });
-        logger.debug('stdout (first 500)', { stdout: stdout.substring(0, 500) || '(empty)' });
+        // Log lengths only to avoid leaking sensitive content
+        logger.debug(`Output lengths: stdout=${stdout.length}, stderr=${stderr.length}`);
         resolve(null);
         return;
       }
@@ -324,9 +392,9 @@ Respond with ONLY valid JSON, no markdown code blocks, no explanation.`;
           resolve(null);
         }
       } catch (error) {
-        // Pass raw output through context for proper sanitization
         logger.error(`Failed to parse claude -p output`, error instanceof Error ? error : undefined);
-        logger.debug('Raw output (first 500)', { stdout: stdout.substring(0, 500) });
+        // Log length only to avoid leaking sensitive content
+        logger.debug(`Output length: ${stdout.length} chars`);
         resolve(null);
       }
     });
