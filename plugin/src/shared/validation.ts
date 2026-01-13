@@ -9,30 +9,48 @@ import { z } from "zod";
 // Hook Payload Schemas
 // ============================================================================
 
+// Claude Code sends snake_case fields, so we accept both formats
 export const SessionStartPayloadSchema = z.object({
-	sessionId: z.string().min(1),
+	session_id: z.string().min(1),
 	cwd: z.string().min(1),
-});
+}).transform((data) => ({
+	sessionId: data.session_id,
+	cwd: data.cwd,
+}));
 
 export const UserPromptSubmitPayloadSchema = z.object({
-	sessionId: z.string().min(1),
-	promptNumber: z.number().int().positive(),
-	promptText: z.string(),
-});
+	session_id: z.string().min(1),
+	prompt_number: z.number().int().positive(),
+	prompt: z.string(),
+}).transform((data) => ({
+	sessionId: data.session_id,
+	promptNumber: data.prompt_number,
+	promptText: data.prompt,
+}));
 
 export const PostToolUsePayloadSchema = z.object({
-	sessionId: z.string().min(1),
-	promptNumber: z.number().int().positive(),
-	toolName: z.string().min(1),
-	toolInput: z.string(),
-	toolOutput: z.string(),
-	durationMs: z.number().int().nonnegative().optional(),
+	session_id: z.string().min(1),
+	prompt_number: z.number().int().positive(),
+	tool_name: z.string().min(1),
+	tool_input: z.string(),
+	tool_response: z.string(),
+	duration_ms: z.number().int().nonnegative().optional(),
 	cwd: z.string().optional(),
-});
+}).transform((data) => ({
+	sessionId: data.session_id,
+	promptNumber: data.prompt_number,
+	toolName: data.tool_name,
+	toolInput: data.tool_input,
+	toolOutput: data.tool_response,
+	durationMs: data.duration_ms,
+	cwd: data.cwd,
+}));
 
 export const StopPayloadSchema = z.object({
-	sessionId: z.string().min(1),
-});
+	session_id: z.string().min(1),
+}).transform((data) => ({
+	sessionId: data.session_id,
+}));
 
 // ============================================================================
 // MCP Tool Argument Schemas
