@@ -41,7 +41,7 @@ async function main() {
     if (fs.existsSync(projectBasePath)) {
       let content = fs.readFileSync(projectBasePath, 'utf-8');
       if (!content.includes('## Categories')) {
-        const categories = ['knowledge', 'research', 'decisions', 'sessions', 'errors', 'files'];
+        const categories = ['research', 'decisions', 'errors', 'patterns'];
         const categoryLinks = categories
           .map(cat => `- [[${config.vault.memFolder}/projects/${projectName}/${cat}/${cat}|${cat.charAt(0).toUpperCase() + cat.slice(1)}]]`)
           .join('\n');
@@ -56,7 +56,7 @@ async function main() {
     }
 
     // Backfill parent links for existing notes
-    const categories = ['knowledge', 'research', 'decisions', 'sessions', 'errors', 'files'];
+    const categories = ['research', 'decisions', 'errors', 'patterns'];
 
     for (const category of categories) {
       const categoryPath = path.join(projectPath, category);

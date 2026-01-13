@@ -13,8 +13,6 @@
  */
 
 import * as fs from 'fs';
-import * as os from 'os';
-import * as path from 'path';
 import { spawn } from 'child_process';
 import { loadConfig, sanitizeProjectName } from '../../src/shared/config.js';
 import { parseTranscript, extractQAPairs, extractWebResearch } from '../../src/services/transcript.js';
@@ -79,16 +77,53 @@ async function main() {
       process.exit(0);
     }
 
-    logger.info(`Parsed ${conversation.turns.length} conversation turns`);
+    // Filter to only process turns AFTER the last summary (leafUuid)
+    let turnsToProcess = conversation.turns;
+    if (conversation.leafUuid) {
+      const leafIndex = conversation.turns.findIndex(t => t.uuid === conversation.leafUuid);
+      if (leafIndex >= 0) {
+        turnsToProcess = conversation.turns.slice(leafIndex + 1);
+        logger.info(`Filtering to ${turnsToProcess.length} turns after leafUuid (was ${conversation.turns.length} total)`);
+      } else {
+        logger.info(`leafUuid ${conversation.leafUuid} not found in turns, processing all ${conversation.turns.length} turns`);
+      }
+    } else {
+      logger.info(`No leafUuid found, processing all ${conversation.turns.length} turns (backward compatibility)`);
+    }
+
+    // Log turn previews for debugging
+    if (turnsToProcess.length > 0) {
+      logger.debug(`First turn preview: [${turnsToProcess[0].role}] ${turnsToProcess[0].text.substring(0, 100)}${turnsToProcess[0].text.length > 100 ? '...' : ''}`);
+      const lastTurn = turnsToProcess[turnsToProcess.length - 1];
+      logger.debug(`Last turn preview: [${lastTurn.role}] ${lastTurn.text.substring(0, 100)}${lastTurn.text.length > 100 ? '...' : ''}`);
+    }
+
+    // Note: empty turnsToProcess is valid when leafUuid is the last message
+    // The existing <500 char check below will handle this gracefully
+
+    // Create filtered conversation object for extraction functions
+    const filteredConversation = {
+      turns: turnsToProcess,
+      summary: conversation.summary,
+      leafUuid: conversation.leafUuid,
+    };
 
     // Build context for AI summarization
-    const qaPairs = extractQAPairs(conversation);
-    const research = extractWebResearch(conversation);
+    const qaPairs = extractQAPairs(filteredConversation);
+    const research = extractWebResearch(filteredConversation);
 
     logger.info(`Found ${qaPairs.length} Q&A pairs, ${research.length} research items`);
 
+    // Log Q&A and research previews for debugging
+    if (qaPairs.length > 0) {
+      logger.debug(`First Q&A preview: Q="${qaPairs[0].question.substring(0, 80)}${qaPairs[0].question.length > 80 ? '...' : ''}" A="${qaPairs[0].answer.substring(0, 80)}${qaPairs[0].answer.length > 80 ? '...' : ''}"`);
+    }
+    if (research.length > 0) {
+      logger.debug(`First research preview: [${research[0].tool}] ${research[0].content.substring(0, 80)}${research[0].content.length > 80 ? '...' : ''}`);
+    }
+
     // Build context - will use conversation fallback if no Q&A or research
-    const contextText = buildContextForSummarization(qaPairs, research, conversation);
+    const contextText = buildContextForSummarization(qaPairs, research, filteredConversation);
 
     // Skip if context is too short for meaningful summarization
     if (contextText.length < 500) {
@@ -119,6 +154,11 @@ async function main() {
     }
 
     logger.info(`AI extracted ${knowledgeItems.length} knowledge items`);
+
+    // Log each AI item for debugging
+    for (const item of knowledgeItems) {
+      logger.debug(`AI item: type=${item.type}, title="${String(item.title).substring(0, 50)}${String(item.title).length > 50 ? '...' : ''}", relevance=${item.relevance}`);
+    }
 
     // Filter and write knowledge to vault
     try {
@@ -213,7 +253,11 @@ async function main() {
           });
         }
 
+        const keptTitles = validItems.map(i => i.title.substring(0, 30)).join(', ');
         logger.info(`Processed ${knowledgeItems.length} items: ${validItems.length} kept, ${skippedByAI + skippedByGuardrail} skipped (${skippedByAI} by AI, ${skippedByGuardrail} by guardrail)`);
+        if (validItems.length > 0) {
+          logger.debug(`Kept items: ${keptTitles}${keptTitles.length > 100 ? '...' : ''}`);
+        }
 
         if (validItems.length === 0) {
           logger.info('No valid knowledge items to write');

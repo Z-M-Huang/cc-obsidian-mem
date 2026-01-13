@@ -78,7 +78,7 @@ describe('Knowledge Write', () => {
       expect(paths[0]).toContain('research');
     });
 
-    test('routes non-research types to knowledge folder', async () => {
+    test('routes knowledge types to correct folders', async () => {
       const types = ['qa', 'explanation', 'decision', 'learning'] as const;
 
       for (const type of types) {
@@ -97,7 +97,12 @@ describe('Knowledge Write', () => {
         const paths = await vault.writeKnowledgeBatch(items, `test-project-${type}`);
 
         expect(paths.length).toBe(1);
-        expect(paths[0]).toContain('knowledge');
+        // Decision goes to decisions/, all others go to research/
+        if (type === 'decision') {
+          expect(paths[0]).toContain('decisions');
+        } else {
+          expect(paths[0]).toContain('research');
+        }
       }
     });
   });

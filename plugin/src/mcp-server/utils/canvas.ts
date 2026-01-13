@@ -44,13 +44,13 @@ export interface CanvasNote {
   created: string;        // ISO date string from frontmatter.created
 }
 
-export type CanvasFolder = 'errors' | 'decisions' | 'patterns' | 'files' | 'knowledge' | 'research';
+export type CanvasFolder = 'errors' | 'decisions' | 'patterns' | 'research';
 
 /**
  * Fixed folder order for deterministic layout
  */
 const FOLDER_ORDER: CanvasFolder[] = [
-  'errors', 'decisions', 'patterns', 'files', 'knowledge', 'research'
+  'errors', 'decisions', 'patterns', 'research'
 ];
 
 /**
@@ -60,8 +60,6 @@ const FOLDER_TO_GROUP: Record<CanvasFolder, { label: string; color: string }> = 
   errors: { label: 'Errors', color: '1' },       // red
   decisions: { label: 'Decisions', color: '4' }, // green
   patterns: { label: 'Patterns', color: '3' },   // yellow
-  files: { label: 'Files', color: '6' },         // purple
-  knowledge: { label: 'Knowledge', color: '5' }, // cyan
   research: { label: 'Research', color: '2' },   // orange
 };
 
@@ -79,10 +77,8 @@ export function detectFolder(notePath: string): CanvasFolder {
   if (notePath.includes('/errors/')) return 'errors';
   if (notePath.includes('/decisions/')) return 'decisions';
   if (notePath.includes('/patterns/')) return 'patterns';
-  if (notePath.includes('/files/')) return 'files';
   if (notePath.includes('/research/')) return 'research';
-  if (notePath.includes('/knowledge/')) return 'knowledge';
-  return 'knowledge'; // default
+  return 'research'; // default
 }
 
 /**

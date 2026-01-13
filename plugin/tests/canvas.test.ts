@@ -41,20 +41,12 @@ describe('Canvas Utilities', () => {
       expect(detectFolder('projects/test/patterns/pattern.md')).toBe('patterns');
     });
 
-    test('detects files folder', () => {
-      expect(detectFolder('projects/test/files/file.md')).toBe('files');
-    });
-
-    test('detects knowledge folder', () => {
-      expect(detectFolder('projects/test/knowledge/note.md')).toBe('knowledge');
-    });
-
     test('detects research folder', () => {
       expect(detectFolder('projects/test/research/note.md')).toBe('research');
     });
 
-    test('defaults to knowledge for unknown paths', () => {
-      expect(detectFolder('some/unknown/path.md')).toBe('knowledge');
+    test('defaults to research for unknown paths', () => {
+      expect(detectFolder('some/unknown/path.md')).toBe('research');
     });
   });
 
@@ -375,8 +367,7 @@ describe('Cross-Platform Compatibility', () => {
     expect(detectFolder('_claude-mem/projects/test/errors/error.md')).toBe('errors');
     expect(detectFolder('_claude-mem/projects/test/decisions/d.md')).toBe('decisions');
     expect(detectFolder('_claude-mem/projects/test/patterns/p.md')).toBe('patterns');
-    expect(detectFolder('_claude-mem/projects/test/files/f.md')).toBe('files');
-    expect(detectFolder('_claude-mem/projects/test/knowledge/k.md')).toBe('knowledge');
+    expect(detectFolder('_claude-mem/projects/test/research/k.md')).toBe('research');
     expect(detectFolder('_claude-mem/projects/test/research/r.md')).toBe('research');
   });
 
@@ -386,15 +377,15 @@ describe('Cross-Platform Compatibility', () => {
     // With trailing path segments
     expect(detectFolder('projects/test/decisions/2026-01-10_decision.md')).toBe('decisions');
     // Deep nesting
-    expect(detectFolder('a/b/c/knowledge/d/e.md')).toBe('knowledge');
+    expect(detectFolder('a/b/c/research/d/e.md')).toBe('research');
   });
 });
 
 describe('Edge ID Stability', () => {
   test('radialLayout edge IDs are path-based not index-based', () => {
     const notes = [
-      mockNote('a', { path: 'projects/test/knowledge/a.md' }),
-      mockNote('b', { path: 'projects/test/knowledge/b.md' }),
+      mockNote('a', { path: 'projects/test/research/a.md' }),
+      mockNote('b', { path: 'projects/test/research/b.md' }),
     ];
     const { edges } = radialLayout('test', notes);
 
@@ -404,8 +395,8 @@ describe('Edge ID Stability', () => {
     expect(edges[1].id).not.toBe('edge-center-1');
 
     // Edge toNode should match the corresponding node ID
-    expect(edges[0].toNode).toBe(pathToId('projects/test/knowledge/a.md'));
-    expect(edges[1].toNode).toBe(pathToId('projects/test/knowledge/b.md'));
+    expect(edges[0].toNode).toBe(pathToId('projects/test/research/a.md'));
+    expect(edges[1].toNode).toBe(pathToId('projects/test/research/b.md'));
   });
 
   test('radialLayout edges are stable across note reordering', () => {
@@ -430,7 +421,7 @@ describe('Edge ID Stability', () => {
 
   test('radialLayout edge IDs include full encoded path', () => {
     const notes = [
-      mockNote('test', { path: 'projects/my project/knowledge/note.md' }),
+      mockNote('test', { path: 'projects/my project/research/note.md' }),
     ];
     const { edges } = radialLayout('test', notes);
 

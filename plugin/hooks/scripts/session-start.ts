@@ -3,7 +3,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { loadConfig } from '../../src/shared/config.js';
+import { loadConfig, getProjectPath } from '../../src/shared/config.js';
 import { startSession, readSession, reactivateSession } from '../../src/shared/session-store.js';
 import { VaultManager } from '../../src/mcp-server/utils/vault.js';
 import { getProjectInfo, readStdinJson } from './utils/helpers.js';
@@ -22,6 +22,12 @@ async function main() {
 
     // Get project info from git or directory
     const project = await getProjectInfo(input.cwd);
+
+    if (!project) {
+      logger.error('Cannot determine project from cwd', { cwd: input.cwd });
+      return;
+    }
+
     logger.debug('Project detected', { name: project.name, path: project.path, gitRemote: project.gitRemote });
 
     // Check if session already exists (resume scenario after stop event)
@@ -58,6 +64,17 @@ async function main() {
     // Ensure vault structure exists for this project
     const vault = new VaultManager(config.vault.path, config.vault.memFolder);
     await vault.ensureProjectStructure(project.name);
+
+    // Detect and warn about legacy folders
+    const projectPath = getProjectPath(project.name, config);
+    const legacyKnowledgeFolder = path.join(projectPath, 'knowledge');
+    const legacyFilesFolder = path.join(projectPath, 'files');
+    if (fs.existsSync(legacyKnowledgeFolder) || fs.existsSync(legacyFilesFolder)) {
+      logger.warn('Legacy folders detected (knowledge/ or files/). Please migrate files to research/ or patterns/', {
+        knowledge_exists: fs.existsSync(legacyKnowledgeFolder),
+        files_exists: fs.existsSync(legacyFilesFolder),
+      });
+    }
 
     // One-time migration: process any existing legacy pending files
     const pendingDir = path.join(os.homedir(), '.cc-obsidian-mem', 'pending');

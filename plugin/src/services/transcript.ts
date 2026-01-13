@@ -63,6 +63,7 @@ type TranscriptEntry = TranscriptMessage | TranscriptSummary | Record<string, un
 export interface ConversationTurn {
   role: 'user' | 'assistant';
   timestamp?: string;
+  uuid?: string;
   text: string;
   toolCalls?: Array<{
     name: string;
@@ -78,6 +79,7 @@ export interface ConversationTurn {
 export interface ParsedConversation {
   turns: ConversationTurn[];
   summary?: string;
+  leafUuid?: string;
 }
 
 /**
@@ -93,6 +95,7 @@ export function parseTranscript(transcriptPath: string): ParsedConversation {
 
   const turns: ConversationTurn[] = [];
   let summary: string | undefined;
+  let leafUuid: string | undefined;
 
   // Map to store tool results by tool_use_id
   const toolResults = new Map<string, { content: string; isError: boolean }>();
@@ -140,7 +143,10 @@ export function parseTranscript(transcriptPath: string): ParsedConversation {
       const entry = JSON.parse(line) as TranscriptEntry;
 
       if (entry.type === 'summary') {
-        summary = (entry as TranscriptSummary).summary;
+        const summaryEntry = entry as TranscriptSummary;
+        summary = summaryEntry.summary;
+        // Support both camelCase and snake_case for schema compatibility
+        leafUuid = summaryEntry.leafUuid ?? (summaryEntry as Record<string, unknown>).leaf_uuid as string | undefined;
         continue;
       }
 
@@ -185,6 +191,7 @@ export function parseTranscript(transcriptPath: string): ParsedConversation {
         turns.push({
           role: msg.type,
           timestamp: msg.timestamp,
+          uuid: msg.uuid,
           text,
           toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
         });
@@ -194,7 +201,7 @@ export function parseTranscript(transcriptPath: string): ParsedConversation {
     }
   }
 
-  return { turns, summary };
+  return { turns, summary, leafUuid };
 }
 
 /**

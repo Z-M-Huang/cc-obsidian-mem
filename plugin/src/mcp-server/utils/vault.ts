@@ -3,7 +3,7 @@ import * as path from 'path';
 import { parseFrontmatter, stringifyFrontmatter, generateFrontmatter, mergeFrontmatter } from './frontmatter.js';
 import type { Note, NoteFrontmatter, WriteNoteInput, NoteType, SearchResult, ProjectContext } from '../../shared/types.js';
 import { loadConfig, getMemFolderPath, getProjectPath, sanitizeProjectName } from '../../shared/config.js';
-import { PROJECTS_FOLDER, GLOBAL_FOLDER, TEMPLATES_FOLDER } from '../../shared/constants.js';
+import { PROJECTS_FOLDER, TEMPLATES_FOLDER } from '../../shared/constants.js';
 import { createLogger, type Logger } from '../../shared/logger.js';
 
 export class VaultManager {
@@ -33,11 +33,6 @@ export class VaultManager {
     const dirs = [
       memPath,
       path.join(memPath, PROJECTS_FOLDER),
-      path.join(memPath, GLOBAL_FOLDER),
-      path.join(memPath, GLOBAL_FOLDER, 'patterns'),
-      path.join(memPath, GLOBAL_FOLDER, 'tools'),
-      path.join(memPath, GLOBAL_FOLDER, 'learnings'),
-      path.join(memPath, GLOBAL_FOLDER, 'errors'),
       path.join(memPath, TEMPLATES_FOLDER),
     ];
 
@@ -59,7 +54,7 @@ export class VaultManager {
       sanitizeProjectName(projectName)
     );
 
-    const categories = ['errors', 'decisions', 'patterns', 'files', 'knowledge', 'research'];
+    const categories = ['errors', 'decisions', 'patterns', 'research'];
     const dirs = [
       projectPath,
       ...categories.map(cat => path.join(projectPath, cat)),
@@ -127,20 +122,15 @@ export class VaultManager {
         type: 'decision',
         description: 'Technical and architectural decisions',
       },
-      files: {
-        title: 'Files',
-        type: 'file',
-        description: 'File-specific knowledge and edit history',
-      },
-      knowledge: {
-        title: 'Knowledge',
-        type: 'learning',
-        description: 'Learnings, explanations, and Q&A',
+      patterns: {
+        title: 'Patterns',
+        type: 'pattern',
+        description: 'Reusable code patterns and conventions',
       },
       research: {
         title: 'Research',
         type: 'learning',
-        description: 'Web research and documentation lookups',
+        description: 'All extracted knowledge: Q&A, explanations, learnings, web research',
       },
     };
 
@@ -195,7 +185,7 @@ SORT created DESC
     const relativePath = path.relative(this.getMemPath(), projectPath);
 
     // Category links (e.g., decisions/decisions.md)
-    const categories = ['knowledge', 'research', 'decisions', 'errors', 'files', 'patterns'];
+    const categories = ['research', 'decisions', 'errors', 'patterns'];
     const categoryLinks = categories
       .map(cat => `- [[${this.memFolder}/${relativePath}/${cat}/${cat}|${cat.charAt(0).toUpperCase() + cat.slice(1)}]]`)
       .join('\n');
@@ -289,6 +279,12 @@ LIMIT 10
    * Write a note
    */
   async writeNote(input: WriteNoteInput): Promise<{ path: string; created: boolean }> {
+    // Early-return guard for graceful failure in hooks
+    if (!input.project) {
+      this.logger.error('Project is required for writeNote');
+      return { path: '', created: false };
+    }
+
     await this.ensureStructure();
 
     const notePath = input.path || this.generateNotePath(input);
@@ -411,11 +407,15 @@ LIMIT 10
         const oldType = oldFrontmatter.type as NoteType;
         const knowledgeType = oldFrontmatter.knowledge_type as string;
 
-        // If old note was in research folder or has research knowledge_type, keep it in research
-        if (oldNotePath.includes('/research/') || knowledgeType === 'research') {
-          // Store metadata to route to research folder
-          inferredType = 'learning'; // Base type
-          // We'll need to preserve the knowledge_type
+        // If old note has knowledge_type in frontmatter, it's a knowledge note
+        // (regardless of which folder it's in - could be research/ or decisions/)
+        if (knowledgeType) {
+          // Knowledge notes use type=learning with knowledge_type in metadata
+          inferredType = 'learning';
+          // We'll preserve the knowledge_type in metadata below
+        } else if (oldNotePath.includes('/research/')) {
+          // Legacy path-based detection as fallback
+          inferredType = 'learning';
         } else if (oldType) {
           inferredType = oldType;
         }
@@ -436,10 +436,23 @@ LIMIT 10
       },
     };
 
-    // Special handling for research notes - force them to stay in research folder
+    // Special handling for knowledge notes - route to correct folder based on knowledge_type
     let newResult: { path: string; created: boolean };
-    if (oldNotePath.includes('/research/') || oldFrontmatter?.knowledge_type === 'research') {
-      // Manually construct path to keep in research folder
+    const knowledgeType = oldFrontmatter?.knowledge_type as string | undefined;
+    if (knowledgeType) {
+      // Knowledge note - route to correct folder based on knowledge_type
+      const project = newNoteWithLink.project;
+      if (project) {
+        const date = new Date().toISOString().split('T')[0];
+        const slug = this.slugify(newNoteWithLink.title, knowledgeType);
+        const folder = knowledgeType === 'decision' ? 'decisions' : 'research';
+        const knowledgePath = `${PROJECTS_FOLDER}/${sanitizeProjectName(project)}/${folder}/${date}_${slug}.md`;
+        newResult = await this.writeNote({ ...newNoteWithLink, path: knowledgePath });
+      } else {
+        newResult = await this.writeNote(newNoteWithLink);
+      }
+    } else if (oldNotePath.includes('/research/')) {
+      // Legacy path-based detection as fallback
       const project = newNoteWithLink.project;
       if (project) {
         const date = new Date().toISOString().split('T')[0];
@@ -539,6 +552,12 @@ LIMIT 10
     },
     projectName: string
   ): Promise<{ path: string; created: boolean }> {
+    // Early-return guard for graceful failure in hooks
+    if (!projectName) {
+      this.logger.error('Project is required for writeKnowledge');
+      return { path: '', created: false };
+    }
+
     this.logger.debug(`Writing knowledge: ${knowledge.title}`, { type: knowledge.type, project: projectName });
     await this.ensureProjectStructure(projectName);
 
@@ -546,9 +565,12 @@ LIMIT 10
     const slug = this.slugify(knowledge.title, `untitled-${knowledge.type}`);
 
     // Determine folder based on type
-    const folder = knowledge.type === 'research'
-      ? 'research'
-      : 'knowledge';
+    // Decision knowledge has type=learning, knowledge_type=decision. Stored in decisions/ folder
+    // for organizational clarity. searchNotes uses frontmatter.type, searchKnowledge uses
+    // frontmatter.knowledge_type to distinguish between regular notes and extracted knowledge.
+    const folder = knowledge.type === 'decision'
+      ? 'decisions'
+      : 'research';
 
     const notePath = `${PROJECTS_FOLDER}/${sanitizeProjectName(projectName)}/${folder}/${date}_${slug}.md`;
 
@@ -651,8 +673,8 @@ ${keyPointsSection}${sourceSection}
         PROJECTS_FOLDER,
         sanitizeProjectName(options.project)
       );
-      searchDirs.push(path.join(projectPath, 'knowledge'));
       searchDirs.push(path.join(projectPath, 'research'));
+      searchDirs.push(path.join(projectPath, 'decisions'));
     } else {
       // Search all projects
       const projectsDir = path.join(this.getMemPath(), PROJECTS_FOLDER);
@@ -661,8 +683,8 @@ ${keyPointsSection}${sourceSection}
           .filter(d => d.isDirectory())
           .map(d => d.name);
         for (const proj of projects) {
-          searchDirs.push(path.join(projectsDir, proj, 'knowledge'));
           searchDirs.push(path.join(projectsDir, proj, 'research'));
+          searchDirs.push(path.join(projectsDir, proj, 'decisions'));
         }
       }
     }
@@ -727,7 +749,7 @@ ${keyPointsSection}${sourceSection}
 
   /**
    * Search notes by content (keyword search)
-   * Excludes knowledge/ and research/ folders (use searchKnowledge for those)
+   * Excludes research/ folder (use searchKnowledge for that)
    */
   async searchNotes(query: string, options: {
     project?: string;
@@ -753,11 +775,10 @@ ${keyPointsSection}${sourceSection}
     for (const file of files) {
       if (results.length >= limit) break;
 
-      // Skip knowledge/ and research/ folders (handled by searchKnowledge)
+      // Skip research/ folder (handled by searchKnowledge)
       // Normalize path separators for cross-platform support (Windows uses \)
       const relativePath = path.relative(searchDir, file).split(path.sep).join('/');
-      if (relativePath.includes('/knowledge/') || relativePath.includes('/research/') ||
-          relativePath.startsWith('knowledge/') || relativePath.startsWith('research/')) {
+      if (relativePath.includes('/research/') || relativePath.startsWith('research/')) {
         continue;
       }
 
@@ -889,7 +910,7 @@ ${keyPointsSection}${sourceSection}
     // Track total count before slicing for summary display
     let totalPatternFiles = 0;
     if (options.includePatterns !== false) {
-      const patternsDir = path.join(this.getMemPath(), GLOBAL_FOLDER, 'patterns');
+      const patternsDir = path.join(projectPath, 'patterns');
       if (fs.existsSync(patternsDir)) {
         const allPatternFiles = this.walkDir(patternsDir, '.md');
         totalPatternFiles = allPatternFiles.length;
@@ -1023,39 +1044,30 @@ ${keyPointsSection}${sourceSection}
 
     switch (input.type) {
       case 'error':
-        folder = input.project
-          ? `${PROJECTS_FOLDER}/${sanitizeProjectName(input.project)}/errors`
-          : `${GLOBAL_FOLDER}/errors`;
+        folder = `${PROJECTS_FOLDER}/${sanitizeProjectName(input.project)}/errors`;
         fallbackSlug = 'untitled-error';
         break;
       case 'decision':
-        folder = input.project
-          ? `${PROJECTS_FOLDER}/${sanitizeProjectName(input.project)}/decisions`
-          : `${GLOBAL_FOLDER}/decisions`;
+        folder = `${PROJECTS_FOLDER}/${sanitizeProjectName(input.project)}/decisions`;
         // Decisions use slug-only paths so same title appends to same file
         useDate = false;
         fallbackSlug = 'untitled-decision';
         break;
       case 'pattern':
-        folder = input.project
-          ? `${PROJECTS_FOLDER}/${sanitizeProjectName(input.project)}/patterns`
-          : `${GLOBAL_FOLDER}/patterns`;
+        folder = `${PROJECTS_FOLDER}/${sanitizeProjectName(input.project)}/patterns`;
         // Patterns also use slug-only paths
         useDate = false;
         fallbackSlug = 'untitled-pattern';
         break;
       case 'file':
-        folder = input.project
-          ? `${PROJECTS_FOLDER}/${sanitizeProjectName(input.project)}/files`
-          : `${GLOBAL_FOLDER}/files`;
+        // File knowledge is routed to patterns folder
+        folder = `${PROJECTS_FOLDER}/${sanitizeProjectName(input.project)}/patterns`;
         fallbackSlug = 'untitled-file';
         break;
       case 'learning':
       default:
-        // Learnings go to project folder if project is specified
-        folder = input.project
-          ? `${PROJECTS_FOLDER}/${sanitizeProjectName(input.project)}/knowledge`
-          : `${GLOBAL_FOLDER}/learnings`;
+        // Learnings go to research folder
+        folder = `${PROJECTS_FOLDER}/${sanitizeProjectName(input.project)}/research`;
         fallbackSlug = 'untitled-learning';
     }
 

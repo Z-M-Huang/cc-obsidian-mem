@@ -10,7 +10,6 @@ export const DEFAULT_MCP_PORT = 37780;
 export const MEM_FOLDER_NAME = '_claude-mem';
 export const TEMPLATES_FOLDER = 'templates';
 export const PROJECTS_FOLDER = 'projects';
-export const GLOBAL_FOLDER = 'global';
 
 /**
  * Note types

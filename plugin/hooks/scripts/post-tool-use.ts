@@ -438,7 +438,7 @@ async function processFileEdit(
     vault.getMemPath(),
     'projects',
     sanitizeProjectName(project),
-    'files'
+    'patterns'
   );
 
   // Ensure directory exists
@@ -467,8 +467,8 @@ async function createFileKnowledge(
   const config = loadConfig();
   const fileData = observation.data as { path: string; language?: string; changeType?: string };
 
-  // Parent link to files category index (files/files.md)
-  const parentLink = `[[${config.vault.memFolder}/projects/${sanitizeProjectName(project)}/files/files]]`;
+  // Parent link to patterns category index (patterns/patterns.md)
+  const parentLink = `[[${config.vault.memFolder}/projects/${sanitizeProjectName(project)}/patterns/patterns]]`;
 
   const frontmatter = `---
 type: file

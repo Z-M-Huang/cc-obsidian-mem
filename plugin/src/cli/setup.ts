@@ -128,11 +128,11 @@ SORT date DESC
 LIMIT 10
 \`\`\`
 
-## Global Patterns
+## Patterns
 
 \`\`\`dataview
 TABLE category, usage_count as "Usage"
-FROM "${memFolder}/global/patterns"
+FROM "${memFolder}/projects"
 WHERE type = "pattern"
 SORT usage_count DESC
 LIMIT 10

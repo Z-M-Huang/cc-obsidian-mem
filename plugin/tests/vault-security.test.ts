@@ -81,6 +81,7 @@ describe('VaultManager Path Traversal Prevention', () => {
         title: 'Malicious',
         content: 'payload',
         path: '../../malicious.md',
+        project: 'test-project',
       })
     ).rejects.toThrow(/Path traversal detected/);
   });
@@ -93,6 +94,7 @@ describe('VaultManager Path Traversal Prevention', () => {
         title: 'Malicious',
         content: 'payload',
         path: outsidePath,
+        project: 'test-project',
       })
     ).rejects.toThrow(/Path traversal detected/);
   });
@@ -108,6 +110,7 @@ describe('VaultManager Path Traversal Prevention', () => {
       title: 'Valid Note',
       content: 'This is valid content',
       path: 'projects/test-project/note.md',
+      project: 'test-project',
     });
 
     expect(result.created).toBe(true);
@@ -116,14 +119,14 @@ describe('VaultManager Path Traversal Prevention', () => {
 
   test('normalizes paths with redundant segments', async () => {
     // Create test file
-    fs.mkdirSync(path.join(vaultPath, '_claude-mem', 'global'), { recursive: true });
+    fs.mkdirSync(path.join(vaultPath, '_claude-mem', 'projects', 'test-project', 'research'), { recursive: true });
     fs.writeFileSync(
-      path.join(vaultPath, '_claude-mem', 'global', 'note.md'),
+      path.join(vaultPath, '_claude-mem', 'projects', 'test-project', 'research', 'note.md'),
       '---\ntype: learning\n---\n# Note'
     );
 
     // Path with redundant ./ should still work
-    const note = await vault.readNote('./global/note.md');
+    const note = await vault.readNote('./projects/test-project/research/note.md');
     expect(note.content).toContain('# Note');
   });
 });

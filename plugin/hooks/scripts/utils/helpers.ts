@@ -50,15 +50,12 @@ function isInPluginHooksPath(cwd: string): boolean {
 /**
  * Get project info from the current working directory
  */
-export async function getProjectInfo(cwd: string): Promise<ProjectInfo> {
+export async function getProjectInfo(cwd: string): Promise<ProjectInfo | null> {
   // Check if cwd is inside the plugin's hooks directory (Claude Code bug workaround)
   // When this happens, cwd points to hooks/scripts instead of user's project
   if (isInPluginHooksPath(cwd)) {
-    // Can't determine real project - fall back to global
-    return {
-      name: 'global',
-      path: cwd,
-    };
+    // Can't determine real project - return null
+    return null;
   }
 
   // Find git root - this is the most reliable project detection

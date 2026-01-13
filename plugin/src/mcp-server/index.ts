@@ -29,7 +29,7 @@ async function main() {
 
   const server = new McpServer({
     name: "obsidian-mem",
-    version: "0.5.5",
+    version: "0.6.0",
   });
 
   // Tool: mem_search - Search the knowledge base
@@ -275,7 +275,7 @@ async function main() {
       title: "Write Knowledge Note",
       description:
         "Write knowledge extracted from conversations (Q&A, explanations, research, learnings). " +
-        "Routes research to /research folder, others to /knowledge. Sets knowledge_type in frontmatter for filtered searches.",
+        "Routes to /research folder (decisions go to /decisions). Sets knowledge_type in frontmatter for filtered searches.",
       inputSchema: {
         type: z
           .enum(["qa", "explanation", "decision", "research", "learning"])
@@ -334,7 +334,7 @@ async function main() {
           project
         );
 
-        const folder = type === "research" ? "research" : "knowledge";
+        const folder = type === "decision" ? "decisions" : "research";
         return {
           content: [
             {
@@ -365,7 +365,7 @@ async function main() {
         oldNotePath: z
           .string()
           .describe(
-            'Path to the note being superseded (relative to vault, e.g., "projects/my-project/knowledge/old-note.md")'
+            'Path to the note being superseded (relative to vault, e.g., "projects/my-project/research/old-note.md")'
           ),
         type: z
           .enum(["error", "decision", "pattern", "file", "learning"])
