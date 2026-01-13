@@ -1,6 +1,6 @@
 {
   "name": "cc-obsidian-mem",
-  "version": "0.5.4",
+  "version": "0.5.5",
   "description": "Obsidian-based persistent memory system for Claude Code",
   "type": "module",
   "scripts": {

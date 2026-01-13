@@ -109,14 +109,23 @@ async function main() {
     // where we could inject pending items for Claude to write.
     // Knowledge extraction only happens on /compact (pre-compact hook).
 
-    // Clear any pending knowledge items that were never written
-    // (e.g., user ran /compact but didn't write the pending items before ending)
-    clearPending(input.session_id);
-    logger.debug('Cleared pending knowledge items');
+    // Only clear session file and pending on true 'end' events (not 'stop')
+    // On 'stop', the user might continue the conversation, so we preserve:
+    // - Session file: for pre-compact to read project info
+    // - Pending items: for potential resumption
+    // Stale sessions are cleaned up after 24h by cleanupStaleSessions
+    if (endType === 'end') {
+      // Clear any pending knowledge items that were never written
+      // (e.g., user ran /compact but didn't write the pending items before ending)
+      clearPending(input.session_id);
+      logger.debug('Cleared pending knowledge items');
 
-    // Clear the session file
-    clearSessionFile(input.session_id);
-    logger.debug('Cleared session file');
+      // Clear the session file
+      clearSessionFile(input.session_id);
+      logger.debug('Cleared session file');
+    } else {
+      logger.debug('Session stopped (not ended), preserving session file for potential resumption');
+    }
 
     // Cleanup old session log files (24+ hours old)
     cleanupOldLogs(24);

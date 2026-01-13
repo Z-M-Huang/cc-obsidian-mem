@@ -4,7 +4,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { loadConfig } from '../../src/shared/config.js';
-import { startSession } from '../../src/shared/session-store.js';
+import { startSession, readSession, reactivateSession } from '../../src/shared/session-store.js';
 import { VaultManager } from '../../src/mcp-server/utils/vault.js';
 import { getProjectInfo, readStdinJson } from './utils/helpers.js';
 import { createLogger, logSessionIndex } from '../../src/shared/logger.js';
@@ -24,9 +24,33 @@ async function main() {
     const project = await getProjectInfo(input.cwd);
     logger.debug('Project detected', { name: project.name, path: project.path, gitRemote: project.gitRemote });
 
-    // Initialize session in file store
-    startSession(input.session_id, project.name, input.cwd);
-    logger.info(`Session initialized for project: ${project.name}`);
+    // Check if session already exists (resume scenario after stop event)
+    const existingSession = readSession(input.session_id);
+
+    if (existingSession) {
+      // Session exists - handle based on status
+      if (existingSession.status === 'stopped') {
+        // Reactivate stopped session
+        const reactivated = reactivateSession(input.session_id, project.name, input.cwd);
+        if (reactivated) {
+          logger.info(`Session reactivated for project: ${project.name}`);
+        } else {
+          logger.error('Failed to reactivate stopped session');
+        }
+      } else if (existingSession.status === 'active') {
+        // Already active - just continue (no action needed)
+        logger.debug('Session already active, continuing');
+      } else if (existingSession.status === 'completed') {
+        // Completed session - create a new one (same session_id, fresh start)
+        // This handles the edge case where a completed session file wasn't cleaned up
+        startSession(input.session_id, project.name, input.cwd);
+        logger.info(`New session created (previous was completed) for project: ${project.name}`);
+      }
+    } else {
+      // No existing session - create new one
+      startSession(input.session_id, project.name, input.cwd);
+      logger.info(`Session initialized for project: ${project.name}`);
+    }
 
     // Log session index to MCP log for easy lookup
     logSessionIndex(input.session_id, project.name);

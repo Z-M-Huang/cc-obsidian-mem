@@ -362,12 +362,16 @@ export function startSession(
 
 /**
  * Add an observation to a session (with file locking)
- * Returns false if session doesn't exist, is not active, or write failed
+ * Returns false if session doesn't exist, is not writable, or write failed
+ * Accepts both 'active' and 'stopped' sessions to allow observations
+ * from tools that complete after a stop event.
  */
 export function addObservation(sessionId: string, observation: Observation): boolean {
   const metadata = readSessionMetadata(sessionId);
 
-  if (!metadata || metadata.status !== 'active') {
+  // Allow observations on active or stopped sessions
+  // Stopped sessions can still receive observations from in-flight tool completions
+  if (!metadata || (metadata.status !== 'active' && metadata.status !== 'stopped')) {
     return false;
   }
 
@@ -378,6 +382,12 @@ export function addObservation(sessionId: string, observation: Observation): boo
 
 /**
  * End a specific session by ID
+ * State transitions:
+ * - active + stop -> stopped (can be resumed)
+ * - active + end -> completed (final state)
+ * - stopped + end -> completed (final state)
+ * - stopped + stop -> no change (already stopped)
+ * - completed + any -> no change (already completed)
  */
 export function endSession(sessionId: string, endType: 'stop' | 'end'): Session | null {
   const metadata = readSessionMetadata(sessionId);
@@ -386,8 +396,13 @@ export function endSession(sessionId: string, endType: 'stop' | 'end'): Session 
     return null;
   }
 
-  // Don't re-end an already ended session
-  if (metadata.status !== 'active') {
+  // Don't re-end an already completed session
+  if (metadata.status === 'completed') {
+    return readSession(sessionId);
+  }
+
+  // If already stopped and receiving another 'stop', no change needed
+  if (metadata.status === 'stopped' && endType === 'stop') {
     return readSession(sessionId);
   }
 
@@ -401,6 +416,55 @@ export function endSession(sessionId: string, endType: 'stop' | 'end'): Session 
 
   writeSessionMetadata(metadata);
   return readSession(sessionId);
+}
+
+/**
+ * Reactivate a stopped session (resume after stop event)
+ * Used when session-start receives the same session_id for a stopped session.
+ * Resets the session to 'active' state, clearing end markers.
+ *
+ * @param sessionId The session ID to reactivate
+ * @param projectName Optional new project name (if user changed directories)
+ * @param projectPath Optional new project path
+ * @returns true if session was reactivated, false if not found or already active
+ */
+export function reactivateSession(
+  sessionId: string,
+  projectName?: string,
+  projectPath?: string
+): boolean {
+  const metadata = readSessionMetadata(sessionId);
+
+  if (!metadata) {
+    return false;
+  }
+
+  // Don't reactivate if already active
+  if (metadata.status === 'active') {
+    return false;
+  }
+
+  // Don't reactivate completed sessions - they should create a new session
+  if (metadata.status === 'completed') {
+    return false;
+  }
+
+  // Reactivate: set status to active, clear end markers
+  metadata.status = 'active';
+  delete metadata.endTime;
+  delete metadata.durationMinutes;
+  metadata.lastUpdated = new Date().toISOString();
+
+  // Update project info if provided and different
+  if (projectName && projectName !== metadata.project) {
+    metadata.project = projectName;
+  }
+  if (projectPath && projectPath !== metadata.projectPath) {
+    metadata.projectPath = projectPath;
+  }
+
+  writeSessionMetadata(metadata);
+  return true;
 }
 
 /**

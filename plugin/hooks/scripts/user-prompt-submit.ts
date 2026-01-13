@@ -33,9 +33,10 @@ async function main() {
       return;
     }
 
+    // Allow stopped sessions to receive observations (user can continue after stop)
     const session = readSession(input.session_id);
-    if (!session || session.status !== 'active') {
-      logger.debug('Session not found or inactive', { sessionExists: !!session, status: session?.status });
+    if (!session || (session.status !== 'active' && session.status !== 'stopped')) {
+      logger.debug('Session not found or not writable', { sessionExists: !!session, status: session?.status });
       return;
     }
 

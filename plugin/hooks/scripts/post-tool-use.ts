@@ -33,10 +33,11 @@ async function main() {
       return;
     }
 
-    // Check if we have an active session for this session_id
+    // Check if we have an active or stopped session for this session_id
+    // Allow stopped sessions to receive observations from in-flight tool completions
     const session = readSession(input.session_id);
-    if (!session || session.status !== 'active') {
-      logger.debug('Session not found or inactive', { sessionExists: !!session, status: session?.status });
+    if (!session || (session.status !== 'active' && session.status !== 'stopped')) {
+      logger.debug('Session not found or not writable', { sessionExists: !!session, status: session?.status });
       return;
     }
 
