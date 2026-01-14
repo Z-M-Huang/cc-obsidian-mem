@@ -7,7 +7,7 @@
 
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from "fs";
 import { join } from "path";
-import { homedir } from "os";
+import { homedir, tmpdir } from "os";
 import type { Config } from "../shared/types.js";
 import { initDatabase, closeDatabase } from "../sqlite/database.js";
 import { createLogger } from "../shared/logger.js";
@@ -31,7 +31,7 @@ const DEFAULT_CONFIG: Config = {
 	},
 	logging: {
 		verbose: false,
-		logDir: undefined,
+		logDir: tmpdir(),
 	},
 	canvas: {
 		enabled: false,

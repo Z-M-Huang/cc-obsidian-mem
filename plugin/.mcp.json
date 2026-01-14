@@ -3,10 +3,7 @@
     "obsidian-mem": {
       "type": "stdio",
       "command": "bun",
-      "args": ["run", "${CLAUDE_PLUGIN_ROOT}/src/mcp-server/index.ts"],
-      "env": {
-        "CONFIG_PATH": "${HOME}/.cc-obsidian-mem/config.json"
-      }
+      "args": ["run", "${CLAUDE_PLUGIN_ROOT}/src/mcp-server/index.ts"]
     }
   }
 }

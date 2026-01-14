@@ -36,3 +36,4 @@ temp/
 *.tmp
 
 .task
+.claude/settings.local.json
