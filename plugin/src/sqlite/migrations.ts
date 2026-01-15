@@ -22,9 +22,19 @@ export function runMigrations(db: Database): void {
 			started_at_epoch INTEGER NOT NULL,
 			completed_at TEXT,
 			completed_at_epoch INTEGER,
-			status TEXT NOT NULL CHECK(status IN ('active', 'completed', 'failed'))
+			status TEXT NOT NULL CHECK(status IN ('active', 'completed', 'failed')),
+			processing_started_at INTEGER
 		)
 	`);
+
+	// Add processing_started_at column if it doesn't exist (migration)
+	try {
+		db.run(`
+			ALTER TABLE sessions ADD COLUMN processing_started_at INTEGER
+		`);
+	} catch {
+		// Column already exists or other error - ignore
+	}
 
 	// Create user_prompts table
 	db.run(`

@@ -7,6 +7,12 @@
 // Configuration Types
 // ============================================================================
 
+export interface ProcessingConfig {
+	stalenessTimeoutMinutes: number;
+	pidValidationTimeoutMs: number;
+	spawnVerifyDelayMs: number;
+}
+
 export interface Config {
 	vault: {
 		path: string;
@@ -30,6 +36,7 @@ export interface Config {
 		autoGenerate?: boolean;
 		updateStrategy?: "always" | "skip";
 	};
+	processing?: ProcessingConfig;
 	defaultProject?: string;
 }
 

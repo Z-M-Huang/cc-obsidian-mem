@@ -10,6 +10,7 @@ import type { Config } from "./types.js";
 
 const CONFIG_DIR = join(homedir(), ".cc-obsidian-mem");
 const CONFIG_FILE = join(CONFIG_DIR, "config.json");
+export const LOCKS_DIR = join(CONFIG_DIR, "locks");
 
 const DEFAULT_CONFIG: Config = {
 	vault: {
@@ -33,6 +34,11 @@ const DEFAULT_CONFIG: Config = {
 		enabled: false,
 		autoGenerate: false,
 		updateStrategy: "skip",
+	},
+	processing: {
+		stalenessTimeoutMinutes: 30,
+		pidValidationTimeoutMs: 500,
+		spawnVerifyDelayMs: 100,
 	},
 };
 
@@ -72,6 +78,7 @@ function mergeConfig(defaults: Config, user: Partial<Config>): Config {
 		},
 		logging: { ...defaults.logging, ...user.logging },
 		canvas: { ...defaults.canvas, ...user.canvas },
+		processing: { ...defaults.processing!, ...user.processing },
 		defaultProject: user.defaultProject ?? defaults.defaultProject,
 	};
 }

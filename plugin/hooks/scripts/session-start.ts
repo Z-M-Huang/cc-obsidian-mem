@@ -14,6 +14,7 @@ import {
 	getOrphanSessions,
 	updateSessionStatus,
 	cleanupOldSessions,
+	cleanupStaleProcessingSessions,
 } from "../../src/sqlite/session-store.js";
 import {
 	initFallbackSession,
@@ -21,6 +22,7 @@ import {
 } from "../../src/fallback/fallback-store.js";
 import { validate, SessionStartPayloadSchema } from "../../src/shared/validation.js";
 import { detectProjectName } from "../../src/shared/project-detection.js";
+import { ensureLocksDir, cleanupStaleLocks } from "../../src/session-end/process-lock.js";
 import { existsSync, readdirSync, statSync, unlinkSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
@@ -141,7 +143,24 @@ async function main() {
 		try {
 			const db = initDatabase(config.sqlite.path!, logger);
 
-			// 1. Clean up orphan sessions (active but older than timeout)
+			// 0. Ensure locks directory exists
+			ensureLocksDir();
+
+			// 1. Clean up stale processing sessions (atomic operation)
+			const stalenessTimeoutMinutes = config.processing?.stalenessTimeoutMinutes ?? 30;
+			const staleCount = cleanupStaleProcessingSessions(db, stalenessTimeoutMinutes);
+
+			if (staleCount > 0) {
+				logger.info("Cleaned up stale processing sessions", { count: staleCount });
+			}
+
+			// 2. Clean up stale lock files
+			const staleLocks = cleanupStaleLocks(5 * 60 * 1000); // 5 minute max age for reservations
+			if (staleLocks.length > 0) {
+				logger.info("Cleaned up stale lock files", { count: staleLocks.length, sessions: staleLocks });
+			}
+
+			// 3. Clean up orphan sessions (active but older than timeout)
 			const orphanTimeoutHours = config.sqlite.retention?.orphan_timeout_hours ?? 24;
 			const orphans = getOrphanSessions(db, orphanTimeoutHours);
 
@@ -156,10 +175,10 @@ async function main() {
 				}
 			}
 
-			// 2. Clean up orphan temp files
+			// 4. Clean up orphan temp files
 			cleanupOrphanTempFiles(logger);
 
-			// 3. Create new session
+			// 5. Create new session
 			createSession(db, validated.sessionId, projectName);
 
 			logger.info("Session created in SQLite", {
@@ -167,7 +186,7 @@ async function main() {
 				project: projectName,
 			});
 
-			// 4. TODO: Query Obsidian vault for project context and inject
+			// 6. TODO: Query Obsidian vault for project context and inject
 			// For now, just output a simple context message
 			const contextMessage = `<!-- Memory context for ${projectName.replace(/_/g, "-")} -->
 
@@ -176,7 +195,7 @@ Use \`mem_search\` and \`mem_read\` to access project knowledge.
 
 			outputContext(contextMessage);
 
-			// 5. Clean up old sessions based on retention
+			// 7. Clean up old sessions based on retention
 			const retentionCount = config.sqlite.retention?.sessions ?? 50;
 			cleanupOldSessions(db, retentionCount);
 

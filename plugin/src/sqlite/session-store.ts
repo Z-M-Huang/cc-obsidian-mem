@@ -75,6 +75,74 @@ export function updateSessionStatus(
 }
 
 /**
+ * Mark session as processing (set processing_started_at timestamp)
+ */
+export function markSessionProcessing(
+	db: Database,
+	sessionId: string
+): void {
+	retryWithBackoff(() => {
+		const nowEpoch = Date.now();
+
+		const stmt = db.prepare(`
+			UPDATE sessions
+			SET processing_started_at = ?
+			WHERE session_id = ?
+		`);
+
+		stmt.run(nowEpoch, sessionId);
+	});
+}
+
+/**
+ * Get sessions that have been processing for too long
+ * Used for cleanup of stale background processes
+ */
+export function getStaleProcessingSessions(
+	db: Database,
+	timeoutMinutes: number
+): Session[] {
+	return retryWithBackoff(() => {
+		const cutoffEpoch = Date.now() - timeoutMinutes * 60 * 1000;
+
+		const stmt = db.prepare(`
+			SELECT * FROM sessions
+			WHERE status = ?
+			  AND processing_started_at IS NOT NULL
+			  AND processing_started_at < ?
+		`);
+
+		return stmt.all("active", cutoffEpoch) as Session[];
+	});
+}
+
+/**
+ * Atomically mark stale processing sessions as failed
+ * Uses WHERE clause to prevent race with background processes that just started
+ */
+export function cleanupStaleProcessingSessions(
+	db: Database,
+	timeoutMinutes: number
+): number {
+	return retryWithBackoff(() => {
+		const cutoffEpoch = Date.now() - timeoutMinutes * 60 * 1000;
+		const now = new Date().toISOString();
+		const nowEpoch = Date.now();
+
+		const stmt = db.prepare(`
+			UPDATE sessions
+			SET status = ?, completed_at = ?, completed_at_epoch = ?
+			WHERE status = ?
+			  AND processing_started_at IS NOT NULL
+			  AND processing_started_at < ?
+		`);
+
+		const result = stmt.run("failed", now, nowEpoch, "active", cutoffEpoch);
+		return result.changes;
+	});
+}
+
+/**
  * Get all active sessions
  */
 export function getActiveSessions(db: Database): Session[] {

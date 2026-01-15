@@ -1,30 +1,19 @@
 #!/usr/bin/env bun
 
 /**
- * Stop Hook
+ * Stop Hook (Non-Blocking)
  *
- * 1. Processes any remaining pending messages
- * 2. Requests final session summary
- * 3. Marks session as completed
- * 4. Triggers background summarization for vault export
+ * This hook exits immediately after spawning a background process.
+ * All heavy processing happens in the background:
+ * - Processing pending messages
+ * - Generating session summary
+ * - Vault summarization
+ * - Cleanup
+ *
+ * This ensures Claude's exit is not delayed by our processing.
  */
 
-import { loadConfig, isAgentSession } from "../../src/shared/config.js";
-import { createLogger } from "../../src/shared/logger.js";
-import { initDatabase, closeDatabase } from "../../src/sqlite/database.js";
-import {
-	updateSessionStatus,
-	cleanupOldSessions,
-	getSession,
-} from "../../src/sqlite/session-store.js";
-import {
-	enqueueMessage,
-	claimAllMessages,
-	deleteMessages,
-	hasPendingMessages,
-} from "../../src/sqlite/pending-store.js";
-import { processSessionMessages, clearAgentContext } from "../../src/sdk/agent.js";
-import { updateFallbackSessionStatus } from "../../src/fallback/fallback-store.js";
+import { isAgentSession } from "../../src/shared/config.js";
 import { validate, StopPayloadSchema } from "../../src/shared/validation.js";
 import { spawn } from "child_process";
 import { join, dirname } from "path";
@@ -58,8 +47,6 @@ async function readStdinJson<T>(): Promise<T> {
 }
 
 async function main() {
-	let logger: ReturnType<typeof createLogger> | null = null;
-
 	// Step 1: Read stdin with dedicated error handling
 	let input: StopInput;
 	try {
@@ -75,114 +62,65 @@ async function main() {
 		return;
 	}
 
-	// Step 3: Normal processing with its own try-catch
+	// Step 3: Validate input
+	let sessionId: string;
 	try {
-		const config = loadConfig();
-		logger = createLogger({
-			logDir: config.logging?.logDir,
-			sessionId: input.session_id,
-			verbose: config.logging?.verbose,
-		});
-
-		logger.info("Stop hook triggered", { sessionId: input.session_id });
-
-		// Validate input
 		const validated = validate(StopPayloadSchema, input);
+		sessionId = validated.sessionId;
+	} catch (error) {
+		console.error("[cc-obsidian-mem] Invalid stop hook input:", error);
+		return;
+	}
 
-		// Try SQLite first
-		try {
-			const db = initDatabase(config.sqlite.path!, logger);
+	// Step 4: Try to acquire reservation lock
+	const { acquireReservationLock, readLockFile, isProcessAliveWithStartTime } = await import("../../src/session-end/process-lock.js");
+	const { loadConfig } = await import("../../src/shared/config.js");
 
-			// Get session for project info
-			const session = getSession(db, validated.sessionId);
-			if (!session) {
-				logger.warn("Session not found", { sessionId: validated.sessionId });
-				closeDatabase(db, logger);
+	const config = loadConfig();
+	const timeoutMs = config.processing?.pidValidationTimeoutMs ?? 500;
+
+	const lockAcquired = acquireReservationLock(sessionId);
+
+	if (!lockAcquired) {
+		// Lock exists - check if process is alive
+		const lock = readLockFile(sessionId);
+
+		if (lock && lock.status === "running") {
+			// Validate process with timeout
+			const alive = await isProcessAliveWithStartTime(
+				lock.pid,
+				lock.startedAt,
+				timeoutMs
+			);
+
+			if (alive) {
+				// Process is alive (or timeout) - SKIP spawn to prevent duplicates
+				console.error(`[cc-obsidian-mem] Session already being processed (pid=${lock.pid}), skipping`);
 				return;
 			}
 
-			// Process any remaining pending messages
-			if (hasPendingMessages(db, validated.sessionId)) {
-				logger.info("Processing remaining pending messages");
-				try {
-					const result = processSessionMessages(db, validated.sessionId, logger);
-					logger.info("Pending messages processed", {
-						processed: result.processed,
-						observations: result.observations.length,
-					});
-				} catch (agentError) {
-					logger.warn("Agent processing failed", { error: agentError });
-				}
-			}
-
-			// Request final summary
-			enqueueMessage(db, validated.sessionId, "summary_request", {
-				last_assistant_message: "",
-			});
-
-			// Process the summary request
-			try {
-				const summaryResult = processSessionMessages(db, validated.sessionId, logger);
-				logger.info("Summary generated", {
-					observations: summaryResult.observations.length,
-				});
-			} catch (summaryError) {
-				logger.warn("Summary generation failed", { error: summaryError });
-			}
-
-			// Clear agent context
-			clearAgentContext(validated.sessionId);
-
-			// Mark session as completed
-			updateSessionStatus(db, validated.sessionId, "completed");
-
-			logger.info("Session marked as completed", {
-				sessionId: validated.sessionId,
-			});
-
-			// Trigger background summarization for vault export
-			triggerBackgroundSummarization(validated.sessionId, logger);
-
-			// Clean up old sessions based on retention
-			const retentionCount = config.sqlite.retention?.sessions ?? 50;
-			cleanupOldSessions(db, retentionCount);
-
-			closeDatabase(db, logger);
-		} catch (sqliteError) {
-			logger.warn("SQLite error, using fallback storage", { error: sqliteError });
-
-			// Fallback to JSON storage
-			updateFallbackSessionStatus(validated.sessionId, "completed");
-
-			logger.info("Session marked as completed in fallback storage", {
-				sessionId: validated.sessionId,
-			});
+			// Process is dead - will retry lock acquisition in spawn
+		} else if (lock && lock.status === "reserved") {
+			// Another stop hook has reservation
+			console.error(`[cc-obsidian-mem] Session already reserved, skipping`);
+			return;
 		}
-	} catch (error) {
-		// Log error but don't throw - hooks must never crash
-		if (logger) {
-			logger.error("Stop hook error", { error });
-		} else {
-			console.error("Stop hook error:", error);
+
+		// Lock was stale/invalid - readLockFile deleted it, retry
+		const retryAcquired = acquireReservationLock(sessionId);
+		if (!retryAcquired) {
+			console.error(`[cc-obsidian-mem] Failed to acquire lock on retry, skipping`);
+			return;
 		}
 	}
-}
 
-/**
- * Trigger background summarization to export observations to vault
- */
-function triggerBackgroundSummarization(
-	sessionId: string,
-	logger: ReturnType<typeof createLogger>
-): void {
+	// Step 5: Spawn background processor and exit immediately
 	try {
-		// Get the path to the summarizer script
 		const __filename = fileURLToPath(import.meta.url);
 		const __dirname = dirname(__filename);
-		const summarizerPath = join(__dirname, "../../src/summarizer/run-summarizer.ts");
+		const processorPath = join(__dirname, "../../src/session-end/run-session-end.ts");
 
-		// Spawn the summarizer in background
-		const child = spawn("bun", ["run", summarizerPath, sessionId], {
+		const child = spawn("bun", ["run", processorPath, sessionId], {
 			detached: true,
 			stdio: "ignore",
 			windowsHide: true, // Prevent cmd popup on Windows
@@ -190,14 +128,16 @@ function triggerBackgroundSummarization(
 
 		child.unref();
 
-		logger.info("Background summarization triggered", {
-			sessionId,
-			pid: child.pid,
-		});
+		console.error(`[cc-obsidian-mem] Background session-end started (pid=${child.pid})`);
+
+		// Wait briefly to verify spawn succeeded
+		const verifyDelay = config.processing?.spawnVerifyDelayMs ?? 100;
+		await new Promise((resolve) => setTimeout(resolve, verifyDelay));
 	} catch (error) {
-		logger.warn("Failed to trigger background summarization", {
-			error: (error as Error).message,
-		});
+		console.error("[cc-obsidian-mem] Failed to spawn background processor:", error);
+		// Release lock on spawn failure
+		const { releaseLock } = await import("../../src/session-end/process-lock.js");
+		releaseLock(sessionId);
 	}
 }
 

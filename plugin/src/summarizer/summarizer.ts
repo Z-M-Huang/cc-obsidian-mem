@@ -4,9 +4,8 @@
  */
 
 import { Database } from "bun:sqlite";
-import { writeFileSync, unlinkSync, existsSync, mkdirSync } from "fs";
+import { writeFileSync, existsSync, mkdirSync } from "fs";
 import { join } from "path";
-import { tmpdir, homedir } from "os";
 import { spawn } from "child_process";
 import { initDatabase, closeDatabase } from "../sqlite/database.js";
 import {
@@ -34,30 +33,37 @@ interface ExtractedKnowledge {
 
 /**
  * Run summarization for a session
+ * @param sessionId - Session ID to summarize
+ * @param logger - Logger instance
+ * @param db - Optional database connection (if not provided, will open new connection)
  */
 export async function summarizeSession(
 	sessionId: string,
-	logger: Logger
+	logger: Logger,
+	db?: Database
 ): Promise<{ success: boolean; error?: string; writtenNotes: string[] }> {
 	const config = loadConfig();
-	const tempFile = join(tmpdir(), `cc-obsidian-mem-${sessionId}.txt`);
 	const writtenNotes: string[] = [];
+	let ownDb = false;
 
 	try {
-		// Initialize database
-		const db = initDatabase(config.sqlite.path!, logger);
+		// Initialize database if not provided
+		if (!db) {
+			db = initDatabase(config.sqlite.path!, logger);
+			ownDb = true;
+		}
 
 		// Get session
-		const session = getSession(db, sessionId);
+		const session = getSession(db!, sessionId);
 		if (!session) {
-			closeDatabase(db, logger);
+			if (ownDb) closeDatabase(db!, logger);
 			return { success: false, error: "Session not found", writtenNotes: [] };
 		}
 
 		// Get session data
-		const prompts = getSessionPrompts(db, sessionId);
-		const toolUses = getSessionToolUses(db, sessionId);
-		const fileReads = getSessionFileReads(db, sessionId);
+		const prompts = getSessionPrompts(db!, sessionId);
+		const toolUses = getSessionToolUses(db!, sessionId);
+		const fileReads = getSessionFileReads(db!, sessionId);
 
 		logger.info("Retrieved session data", {
 			prompts: prompts.length,
@@ -68,15 +74,15 @@ export async function summarizeSession(
 		// Check if there's enough data to summarize
 		if (prompts.length === 0 && toolUses.length < 5) {
 			logger.info("Insufficient data for summarization, skipping");
-			upsertSessionSummary(db, sessionId, session.project, {
+			upsertSessionSummary(db!, sessionId, session.project, {
 				written_to_vault: 1,
 				written_notes: JSON.stringify([]),
 			});
-			closeDatabase(db, logger);
+			if (ownDb) closeDatabase(db!, logger);
 			return { success: true, writtenNotes: [] };
 		}
 
-		// Build prompt
+		// Build user prompt with session data
 		const userPrompt = buildSessionPrompt({
 			project: session.project,
 			prompts: prompts.map((p) => ({
@@ -96,14 +102,17 @@ export async function summarizeSession(
 			})),
 		});
 
-		// Write prompt to temp file
-		const fullPrompt = `${KNOWLEDGE_EXTRACTION_SYSTEM_PROMPT}\n\n${userPrompt}`;
-		writeFileSync(tempFile, fullPrompt, "utf-8");
+		logger.debug("Built prompts for Claude CLI", {
+			systemPromptLength: KNOWLEDGE_EXTRACTION_SYSTEM_PROMPT.length,
+			userPromptLength: userPrompt.length,
+		});
 
-		logger.debug("Wrote prompt to temp file", { path: tempFile });
-
-		// Call Claude via CLI
-		const claudeOutput = await invokeClaudeCLI(tempFile, logger);
+		// Call Claude via CLI with proper system prompt separation
+		const claudeOutput = await invokeClaudeCLI(
+			KNOWLEDGE_EXTRACTION_SYSTEM_PROMPT,
+			userPrompt,
+			logger
+		);
 
 		// Parse JSON response
 		const knowledge = parseKnowledgeResponse(claudeOutput, logger);
@@ -194,14 +203,14 @@ export async function summarizeSession(
 		}
 
 		// Update session summary
-		upsertSessionSummary(db, sessionId, session.project, {
+		upsertSessionSummary(db!, sessionId, session.project, {
 			written_to_vault: 1,
 			written_notes: JSON.stringify(writtenNotes),
 		});
 
 		logger.info("Summarization completed", { notesWritten: writtenNotes.length });
 
-		closeDatabase(db, logger);
+		if (ownDb) closeDatabase(db!, logger);
 		return { success: true, writtenNotes };
 	} catch (error) {
 		logger.error("Summarization failed", { error });
@@ -210,32 +219,38 @@ export async function summarizeSession(
 			error: error instanceof Error ? error.message : String(error),
 			writtenNotes,
 		};
-	} finally {
-		// Clean up temp file
-		try {
-			if (existsSync(tempFile)) {
-				unlinkSync(tempFile);
-			}
-		} catch {
-			// Ignore cleanup errors
-		}
 	}
 }
 
 /**
- * Invoke Claude CLI with prompt file
+ * Invoke Claude CLI with proper system prompt separation
  */
-async function invokeClaudeCLI(promptFile: string, logger: Logger): Promise<string> {
+async function invokeClaudeCLI(
+	systemPrompt: string,
+	userPrompt: string,
+	logger: Logger
+): Promise<string> {
 	return new Promise((resolve, reject) => {
-		const args = ["-p", promptFile, "--output-format", "text"];
+		// Use --system-prompt for extraction instructions, stdin for session data
+		const args = [
+			"-p",
+			"--system-prompt",
+			systemPrompt,
+			"--output-format",
+			"text",
+		];
 
-		logger.debug("Invoking Claude CLI", { args });
+		logger.debug("Invoking Claude CLI", { argsCount: args.length });
 
 		const child = spawn("claude", args, {
-			stdio: ["ignore", "pipe", "pipe"],
+			stdio: ["pipe", "pipe", "pipe"], // Enable stdin
 			env: { ...process.env, [AGENT_SESSION_MARKER]: "1" },
 			windowsHide: true, // Prevent cmd popup on Windows
 		});
+
+		// Write session data to stdin
+		child.stdin.write(userPrompt);
+		child.stdin.end();
 
 		let stdout = "";
 		let stderr = "";
@@ -250,9 +265,13 @@ async function invokeClaudeCLI(promptFile: string, logger: Logger): Promise<stri
 
 		child.on("close", (code) => {
 			if (code === 0) {
+				logger.debug("Claude CLI completed successfully", {
+					stdoutLength: stdout.length,
+					stderrLength: stderr.length,
+				});
 				resolve(stdout);
 			} else {
-				logger.error("Claude CLI failed", { code, stderr });
+				logger.error("Claude CLI failed", { code, stderr: stderr.substring(0, 500) });
 				reject(new Error(`Claude CLI exited with code ${code}: ${stderr}`));
 			}
 		});
@@ -276,26 +295,55 @@ function parseKnowledgeResponse(
 	response: string,
 	logger: Logger
 ): ExtractedKnowledge | null {
+	logger.debug("parseKnowledgeResponse called", {
+		responseLength: response?.length ?? 0,
+		responsePreview: response?.substring(0, 200) ?? "null/undefined",
+	});
+
+	if (!response || response.trim().length === 0) {
+		logger.warn("Empty response from Claude CLI");
+		return null;
+	}
+
 	try {
 		// Try to find JSON in the response
 		const jsonMatch = response.match(/\{[\s\S]*\}/);
 		if (!jsonMatch) {
-			logger.warn("No JSON found in response");
+			logger.warn("No JSON found in response", {
+				responsePreview: response.substring(0, 500),
+			});
 			return null;
 		}
+
+		logger.debug("Found JSON in response", {
+			jsonLength: jsonMatch[0].length,
+		});
 
 		const parsed = JSON.parse(jsonMatch[0]);
 
 		// Validate structure
-		return {
+		const result = {
 			decisions: Array.isArray(parsed.decisions) ? parsed.decisions : [],
 			patterns: Array.isArray(parsed.patterns) ? parsed.patterns : [],
 			errors: Array.isArray(parsed.errors) ? parsed.errors : [],
 			learnings: Array.isArray(parsed.learnings) ? parsed.learnings : [],
 			qa: Array.isArray(parsed.qa) ? parsed.qa : [],
 		};
+
+		logger.debug("Parsed knowledge", {
+			decisions: result.decisions.length,
+			patterns: result.patterns.length,
+			errors: result.errors.length,
+			learnings: result.learnings.length,
+			qa: result.qa.length,
+		});
+
+		return result;
 	} catch (error) {
-		logger.error("Failed to parse knowledge response", { error });
+		logger.error("Failed to parse knowledge response", {
+			error: (error as Error).message,
+			responsePreview: response.substring(0, 500),
+		});
 		return null;
 	}
 }
