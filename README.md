@@ -2,6 +2,21 @@
 
 Obsidian-based persistent memory system for Claude Code. Automatically captures session activity, errors, decisions, and patterns into a browsable, visualizable knowledge base.
 
+## Documentation
+
+**New to cc-obsidian-mem?** Check out the **[Wiki](https://github.com/Z-M-Huang/cc-obsidian-mem/wiki)** for comprehensive guides:
+
+| Guide | Description |
+|-------|-------------|
+| [Getting Started](https://github.com/Z-M-Huang/cc-obsidian-mem/wiki/Getting-Started) | Step-by-step setup for beginners |
+| [Installation](https://github.com/Z-M-Huang/cc-obsidian-mem/wiki/Installation) | Detailed installation instructions |
+| [Configuration](https://github.com/Z-M-Huang/cc-obsidian-mem/wiki/Configuration) | All configuration options explained |
+| [MCP Tools](https://github.com/Z-M-Huang/cc-obsidian-mem/wiki/MCP-Tools) | Tools Claude uses to access memory |
+| [Skills](https://github.com/Z-M-Huang/cc-obsidian-mem/wiki/Skills) | Slash commands (`/mem-search`, `/mem-save`, etc.) |
+| [Vault Structure](https://github.com/Z-M-Huang/cc-obsidian-mem/wiki/Vault-Structure) | How knowledge is organized |
+| [Troubleshooting](https://github.com/Z-M-Huang/cc-obsidian-mem/wiki/Troubleshooting) | Common issues and solutions |
+| [FAQ](https://github.com/Z-M-Huang/cc-obsidian-mem/wiki/FAQ) | Frequently asked questions |
+
 ## Features
 
 - **Automatic Capture**: Hooks automatically track file edits, commands, and errors
@@ -311,56 +326,24 @@ Notes follow a hierarchical linking structure for Obsidian graph navigation:
 
 ## Troubleshooting
 
-### Plugin not loading
+For detailed troubleshooting, see the [Troubleshooting Wiki](https://github.com/Z-M-Huang/cc-obsidian-mem/wiki/Troubleshooting).
 
-1. Verify installation: `/plugin list` should show `cc-obsidian-mem`
-2. Check plugin validation: `claude plugin validate ~/.claude/plugins/cc-obsidian-mem`
-3. Enable debug mode: `claude --debug`
+**Quick fixes:**
 
-### No data being captured
+| Problem | Solution |
+|---------|----------|
+| Plugin not loading | Run `/plugin list` to verify, restart Claude Code |
+| No data captured | Check config exists at `~/.cc-obsidian-mem/config.json` |
+| AI summaries not working | Verify `summarization.enabled: true` in config |
+| Claude not using memory | Add memory instructions to your `CLAUDE.md` (see Step 4) |
 
-1. Restart Claude Code after installing
-2. Check config exists: `cat ~/.cc-obsidian-mem/config.json`
-3. Verify vault path is correct and writable
-4. Check session files: `ls ~/.cc-obsidian-mem/sessions/`
-
-### AI summaries not working
-
-1. Verify `summarization.enabled` is `true` in config
-2. Check model is valid: `sonnet`, `opus`, or `haiku`
-3. Enable verbose logging and check logs (see below)
-4. Ensure Claude CLI is available: `which claude`
-
-### Debugging with verbose logging
-
-Enable verbose logging in `~/.cc-obsidian-mem/config.json`:
+**Enable debug logging:**
 
 ```json
-"logging": {
-  "verbose": true
-}
+"logging": { "verbose": true }
 ```
 
-Then view logs during a session:
-
-```bash
-# Watch all logs in real-time
-tail -f /tmp/cc-obsidian-mem-*.log
-
-# View session-specific log
-tail -f /tmp/cc-obsidian-mem-{session_id}.log
-
-# View MCP server log
-tail -f /tmp/cc-obsidian-mem-mcp.log
-```
-
-Log files are automatically cleaned up after 24 hours. The MCP server log is rotated at 10MB.
-
-### Claude not using memory tools proactively
-
-1. Add the memory system instructions to your project's `CLAUDE.md` (see Step 4 above)
-2. Or add to global `~/.claude/CLAUDE.md` for all projects
-3. You can also ask Claude directly: "search memory for..."
+Then view: `tail -f /tmp/cc-obsidian-mem-*.log`
 
 ---
 
@@ -420,6 +403,12 @@ cd plugin && bun run build
 ```
 
 ---
+
+## Support
+
+- **Documentation:** [Wiki](https://github.com/Z-M-Huang/cc-obsidian-mem/wiki)
+- **Bug Reports:** [GitHub Issues](https://github.com/Z-M-Huang/cc-obsidian-mem/issues)
+- **Questions:** [GitHub Discussions](https://github.com/Z-M-Huang/cc-obsidian-mem/discussions)
 
 ## License
 
