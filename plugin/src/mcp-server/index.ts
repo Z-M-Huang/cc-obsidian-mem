@@ -36,8 +36,8 @@ import {
 	getParentLink,
 	noteTypeToFolder,
 } from "../vault/note-builder.js";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
-import { join, dirname } from "path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync, renameSync } from "fs";
+import { join, dirname, basename } from "path";
 import type { NoteType } from "../shared/types.js";
 
 type TextContent = { type: "text"; text: string };
@@ -671,6 +671,140 @@ async function main() {
 				logger.error("mem_generate_canvas error", { error });
 				return {
 					content: [{ type: "text", text: `Canvas generation error: ${error}` }],
+					isError: true,
+				};
+			}
+		}
+	);
+
+	// ========================================================================
+	// mem_file_ops - Cross-platform file operations
+	// ========================================================================
+	server.registerTool(
+		"mem_file_ops",
+		{
+			title: "File Operations",
+			description:
+				"Cross-platform file operations for vault management (delete, move, mkdir). Validates paths and prevents operations on category index files.",
+			inputSchema: {
+				action: z.enum(["delete", "move", "mkdir"]).describe("Operation to perform"),
+				path: z.string().describe("Target file/folder path (relative to vault)"),
+				destination: z.string().optional().describe("Destination path for move action"),
+			},
+		},
+		async ({ action, path: targetPath, destination }): Promise<ToolResult> => {
+			logger.debug("mem_file_ops called", { action, path: targetPath, destination });
+
+			try {
+				const vaultPath = config.vault.path;
+
+				// Validate target path is within vault
+				const validatedPath = validatePath(targetPath, vaultPath);
+
+				// Security: Prevent operations on category index files
+				const filename = basename(validatedPath);
+				const filenameWithoutExt = filename.replace(/\.md$/, "");
+				const isIndexFile = ["decisions", "patterns", "errors", "research", "knowledge", "sessions"].includes(filenameWithoutExt);
+
+				if (isIndexFile && filename.endsWith(".md")) {
+					logger.warn("mem_file_ops: blocked operation on category index file", { path: targetPath });
+					return {
+						content: [{ type: "text", text: `Error: Cannot perform operations on category index files (${filename})` }],
+						isError: true,
+					};
+				}
+
+				switch (action) {
+					case "delete": {
+						if (!existsSync(validatedPath)) {
+							return {
+								content: [{ type: "text", text: `Error: File not found: ${targetPath}` }],
+								isError: true,
+							};
+						}
+
+						unlinkSync(validatedPath);
+						logger.info("mem_file_ops: deleted file", { path: targetPath });
+
+						return {
+							content: [{ type: "text", text: `Deleted: ${targetPath}` }],
+						};
+					}
+
+					case "move": {
+						if (!destination) {
+							return {
+								content: [{ type: "text", text: "Error: destination parameter required for move action" }],
+								isError: true,
+							};
+						}
+
+						if (!existsSync(validatedPath)) {
+							return {
+								content: [{ type: "text", text: `Error: Source file not found: ${targetPath}` }],
+								isError: true,
+							};
+						}
+
+						// Validate destination path
+						const validatedDest = validatePath(destination, vaultPath);
+
+						// Security: Prevent moving TO a category index file path
+						const destFilename = basename(validatedDest);
+						const destFilenameWithoutExt = destFilename.replace(/\.md$/, "");
+						const isDestIndexFile = ["decisions", "patterns", "errors", "research", "knowledge", "sessions"].includes(destFilenameWithoutExt);
+
+						if (isDestIndexFile && destFilename.endsWith(".md")) {
+							logger.warn("mem_file_ops: blocked move to category index file path", { destination });
+							return {
+								content: [{ type: "text", text: `Error: Cannot move to category index file path (${destFilename})` }],
+								isError: true,
+							};
+						}
+
+						// Check if destination already exists
+						if (existsSync(validatedDest)) {
+							return {
+								content: [{ type: "text", text: `Error: Destination already exists: ${destination}` }],
+								isError: true,
+							};
+						}
+
+						// Ensure destination directory exists
+						const destDir = dirname(validatedDest);
+						if (!existsSync(destDir)) {
+							mkdirSync(destDir, { recursive: true });
+						}
+
+						renameSync(validatedPath, validatedDest);
+						logger.info("mem_file_ops: moved file", { from: targetPath, to: destination });
+
+						return {
+							content: [{ type: "text", text: `Moved: ${targetPath} → ${destination}` }],
+						};
+					}
+
+					case "mkdir": {
+						// Create directory with recursive option
+						mkdirSync(validatedPath, { recursive: true });
+						logger.info("mem_file_ops: created directory", { path: targetPath });
+
+						return {
+							content: [{ type: "text", text: `Created directory: ${targetPath}` }],
+						};
+					}
+
+					default: {
+						return {
+							content: [{ type: "text", text: `Error: Unknown action: ${action}` }],
+							isError: true,
+						};
+					}
+				}
+			} catch (error) {
+				logger.error("mem_file_ops error", { error, action, path: targetPath });
+				return {
+					content: [{ type: "text", text: `File operation error: ${error}` }],
 					isError: true,
 				};
 			}

@@ -16,10 +16,12 @@ You have access to a persistent memory system via MCP tools. Use it proactively.
 | `mem_search`          | Looking for past decisions, errors, patterns, or context |
 | `mem_read`            | Need full content of a specific note                     |
 | `mem_write`           | Saving important decisions, patterns, or learnings       |
+| `mem_write_knowledge` | Saving Q&A, explanations, research from conversations    |
 | `mem_supersede`       | Updating/replacing outdated information                  |
 | `mem_project_context` | Starting work on a project (get recent context)          |
 | `mem_list_projects`   | Need to see all tracked projects                         |
 | `mem_generate_canvas` | Generate Obsidian canvas visualizations for a project    |
+| `mem_file_ops`        | Delete, move, or create directories in the vault         |
 
 ### When to Search Memory
 
