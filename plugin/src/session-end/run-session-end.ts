@@ -28,6 +28,8 @@ import { enqueueMessage, hasPendingMessages } from "../sqlite/pending-store.js";
 import { processSessionMessages, clearAgentContext } from "../sdk/agent.js";
 import { summarizeSession, writeCompletionMarker } from "../summarizer/summarizer.js";
 import { claimLock, releaseLock } from "./process-lock.js";
+import { generateAllCanvases } from "../vault/canvas.js";
+import { slugifyProjectName } from "../vault/vault-manager.js";
 
 async function main() {
 	const sessionId = process.argv[2];
@@ -118,6 +120,22 @@ async function main() {
 				error: summaryResult.error,
 			});
 			writeCompletionMarker(sessionId, false, [], summaryResult.error);
+		}
+
+		// Step 5.5: Generate canvases if enabled
+		if (config.canvas?.enabled && config.canvas?.autoGenerate) {
+			logger.info("Starting canvas generation");
+			try {
+				const projectSlug = slugifyProjectName(session.project);
+				const canvasPaths = generateAllCanvases(projectSlug);
+				logger.info("Canvas generation completed", {
+					canvasesGenerated: canvasPaths.length,
+					paths: canvasPaths,
+				});
+			} catch (canvasError) {
+				// Don't fail session-end on canvas errors
+				logger.warn("Canvas generation failed", { error: canvasError });
+			}
 		}
 
 		// Step 6: Clean up old sessions based on retention

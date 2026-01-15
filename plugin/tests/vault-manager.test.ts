@@ -3,9 +3,10 @@
  */
 
 import { describe, test, expect, afterEach } from "bun:test";
-import { existsSync, rmSync, readFileSync } from "fs";
+import { existsSync, rmSync, readFileSync, writeFileSync, mkdirSync } from "fs";
 import { join } from "path";
-import { ensureProjectStructure, buildParentLink, CATEGORIES, getMemFolderPath, slugifyProjectName } from "../src/vault/vault-manager.js";
+import { ensureProjectStructure, buildParentLink, CATEGORIES, getMemFolderPath, slugifyProjectName, findExistingTopicNote, appendToExistingNote, writeNote, readNote } from "../src/vault/vault-manager.js";
+import { generateFilename } from "../src/vault/note-builder.js";
 
 // Test with real config - cleanup test projects after
 const TEST_PROJECT = "test-vault-manager";
@@ -217,5 +218,206 @@ describe("ensureProjectStructure", () => {
 		if (existsSync(path)) {
 			rmSync(path, { recursive: true, force: true });
 		}
+	});
+
+	test("creates canvases folder separately", () => {
+		ensureProjectStructure(TEST_PROJECT);
+
+		const memPath = getMemFolderPath();
+		const canvasesPath = join(memPath, "projects", TEST_PROJECT, "canvases");
+
+		// Canvases folder should exist
+		expect(existsSync(canvasesPath)).toBe(true);
+
+		// But canvases should NOT be in CATEGORIES (it's created separately)
+		expect(CATEGORIES.includes("canvases" as any)).toBe(false);
+	});
+});
+
+describe("generateFilename", () => {
+	test("generates topic-based filename without date", () => {
+		const filename = generateFilename("Authentication Bug");
+		expect(filename).toBe("authentication-bug.md");
+		expect(filename).not.toMatch(/^\d{4}-\d{2}-\d{2}/); // No date prefix
+	});
+
+	test("sanitizes path traversal attempts", () => {
+		const filename1 = generateFilename("../escape");
+		expect(filename1).not.toContain("..");
+		expect(filename1).not.toContain("/");
+
+		const filename2 = generateFilename("test/path");
+		expect(filename2).not.toContain("/");
+
+		const filename3 = generateFilename("test\\path");
+		expect(filename3).not.toContain("\\");
+	});
+
+	test("normalizes special characters like slugifyProjectName", () => {
+		expect(generateFilename("My Project Name")).toBe("my-project-name.md");
+		expect(generateFilename("v1.2.3")).toBe("v1-2-3.md");
+		expect(generateFilename("test@project!")).toBe("testproject.md");
+	});
+
+	test("collapses multiple hyphens", () => {
+		expect(generateFilename("my  project")).toBe("my-project.md");
+		expect(generateFilename("a...b")).toBe("a-b.md");
+	});
+
+	test("truncates to 50 characters", () => {
+		const longTitle = "a".repeat(100);
+		const filename = generateFilename(longTitle);
+		expect(filename.length).toBeLessThanOrEqual(53); // 50 chars + .md
+	});
+});
+
+describe("findExistingTopicNote", () => {
+	test("returns null for non-existent category", () => {
+		const memPath = getMemFolderPath();
+		const projectPath = join(memPath, "projects", TEST_PROJECT);
+
+		const result = findExistingTopicNote(projectPath, "nonexistent", "test");
+		expect(result).toBe(null);
+	});
+
+	test("finds note with exact slug match", () => {
+		ensureProjectStructure(TEST_PROJECT);
+
+		const memPath = getMemFolderPath();
+		const projectPath = join(memPath, "projects", TEST_PROJECT);
+		const decisionsPath = join(projectPath, "decisions");
+
+		// Create a test note
+		const testNotePath = join(decisionsPath, "authentication-bug.md");
+		writeFileSync(testNotePath, "---\ntype: decision\n---\nTest content", "utf-8");
+
+		// Should find it
+		const result = findExistingTopicNote(projectPath, "decisions", "Authentication Bug");
+		expect(result).toBe(testNotePath);
+	});
+
+	test("returns null when no match exists", () => {
+		ensureProjectStructure(TEST_PROJECT);
+
+		const memPath = getMemFolderPath();
+		const projectPath = join(memPath, "projects", TEST_PROJECT);
+
+		const result = findExistingTopicNote(projectPath, "decisions", "NonExistent Topic");
+		expect(result).toBe(null);
+	});
+
+	test("case-insensitive matching through slug normalization", () => {
+		ensureProjectStructure(TEST_PROJECT);
+
+		const memPath = getMemFolderPath();
+		const projectPath = join(memPath, "projects", TEST_PROJECT);
+		const decisionsPath = join(projectPath, "decisions");
+
+		// Create a test note
+		const testNotePath = join(decisionsPath, "my-decision.md");
+		writeFileSync(testNotePath, "---\ntype: decision\n---\nTest content", "utf-8");
+
+		// Should match regardless of case
+		expect(findExistingTopicNote(projectPath, "decisions", "My Decision")).toBe(testNotePath);
+		expect(findExistingTopicNote(projectPath, "decisions", "MY DECISION")).toBe(testNotePath);
+		expect(findExistingTopicNote(projectPath, "decisions", "my decision")).toBe(testNotePath);
+	});
+});
+
+describe("appendToExistingNote", () => {
+	test("appends content to existing note", () => {
+		ensureProjectStructure(TEST_PROJECT);
+
+		const memPath = getMemFolderPath();
+		const projectPath = join(memPath, "projects", TEST_PROJECT);
+		const decisionsPath = join(projectPath, "decisions");
+		const notePath = join(decisionsPath, "test-append.md");
+
+		// Create initial note with proper frontmatter
+		writeFileSync(notePath, `---
+type: "decision"
+title: "Test Append"
+project: "${TEST_PROJECT}"
+created: "2026-01-01T00:00:00.000Z"
+tags: ["initial"]
+status: "active"
+entry_count: 1
+---
+
+Initial content`, "utf-8");
+
+		// Append new content
+		const success = appendToExistingNote(notePath, "New appended content", ["new-tag"]);
+		expect(success).toBe(true);
+
+		// Verify content was appended
+		const content = readFileSync(notePath, "utf-8");
+		expect(content).toContain("Initial content");
+		expect(content).toContain("## Entry:");
+		expect(content).toContain("New appended content");
+	});
+
+	test("merges tags without duplicates", () => {
+		ensureProjectStructure(TEST_PROJECT);
+
+		const memPath = getMemFolderPath();
+		const projectPath = join(memPath, "projects", TEST_PROJECT);
+		const decisionsPath = join(projectPath, "decisions");
+		const notePath = join(decisionsPath, "test-tags.md");
+
+		// Create initial note
+		writeFileSync(notePath, `---
+type: "decision"
+title: "Test Tags"
+project: "${TEST_PROJECT}"
+created: "2026-01-01T00:00:00.000Z"
+tags: ["tag1", "tag2"]
+status: "active"
+entry_count: 1
+---
+
+Initial content`, "utf-8");
+
+		// Append with overlapping tags
+		appendToExistingNote(notePath, "New content", ["tag2", "tag3"]);
+
+		const content = readFileSync(notePath, "utf-8");
+		// Should have all unique tags
+		expect(content).toContain('"tag1"');
+		expect(content).toContain('"tag2"');
+		expect(content).toContain('"tag3"');
+	});
+
+	test("increments entry_count", () => {
+		ensureProjectStructure(TEST_PROJECT);
+
+		const memPath = getMemFolderPath();
+		const projectPath = join(memPath, "projects", TEST_PROJECT);
+		const decisionsPath = join(projectPath, "decisions");
+		const notePath = join(decisionsPath, "test-count.md");
+
+		// Create initial note with entry_count: 1
+		writeFileSync(notePath, `---
+type: "decision"
+title: "Test Count"
+project: "${TEST_PROJECT}"
+created: "2026-01-01T00:00:00.000Z"
+tags: []
+status: "active"
+entry_count: 1
+---
+
+Initial content`, "utf-8");
+
+		// Append
+		appendToExistingNote(notePath, "Second entry", []);
+
+		const content = readFileSync(notePath, "utf-8");
+		expect(content).toContain("entry_count: 2");
+	});
+
+	test("returns false for non-existent note", () => {
+		const result = appendToExistingNote("/nonexistent/path.md", "content", []);
+		expect(result).toBe(false);
 	});
 });

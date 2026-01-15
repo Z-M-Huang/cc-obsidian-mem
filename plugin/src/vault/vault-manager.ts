@@ -14,6 +14,7 @@ import {
 import { join, relative, dirname, basename } from "path";
 import { loadConfig } from "../shared/config.js";
 import { validatePath } from "../shared/security.js";
+import { createLogger } from "../shared/logger.js";
 import type { NoteFrontmatter } from "../shared/types.js";
 
 /**
@@ -550,6 +551,130 @@ Notes in this category will be listed below.
 }
 
 /**
+ * Find existing note with matching topic slug in a category folder
+ * @param projectPath - Path to project folder
+ * @param category - Category folder name (decisions, patterns, errors, etc.)
+ * @param title - Note title to match against
+ * @returns Path to existing note if found, null otherwise
+ */
+export function findExistingTopicNote(
+	projectPath: string,
+	category: string,
+	title: string
+): string | null {
+	const logger = createLogger({ verbose: false });
+
+	try {
+		const categoryPath = join(projectPath, category);
+
+		if (!existsSync(categoryPath)) {
+			return null;
+		}
+
+		// Normalize input title to slug with same rules as generateFilename:
+		// - slugify (lowercase, spaces/dots→hyphens, remove special chars)
+		// - truncate to 50 chars for consistent matching
+		const inputSlug = slugifyProjectName(title).substring(0, 50);
+
+		// Empty slug after normalization - cannot match any file
+		if (inputSlug.length === 0) {
+			return null;
+		}
+
+		// Get all markdown files in category folder, excluding category index
+		const categoryIndexFile = `${category}.md`;
+		const files = readdirSync(categoryPath).filter(
+			(f) => f.endsWith(".md") && f !== categoryIndexFile
+		);
+
+		// Search for exact slug match
+		for (const file of files) {
+			const fileSlug = file.replace(/\.md$/, "");
+
+			// Compare slugs (already normalized)
+			if (fileSlug === inputSlug) {
+				return join(categoryPath, file);
+			}
+		}
+
+		return null;
+	} catch (error) {
+		logger.warn("Error finding existing topic note", {
+			error,
+			projectPath,
+			category,
+			title,
+		});
+		return null;
+	}
+}
+
+/**
+ * Append new knowledge entry to an existing note
+ * Updates frontmatter (keeps created, updates updated, merges tags, increments entry_count)
+ * Preserves all unknown/custom frontmatter fields
+ * @param notePath - Path to existing note
+ * @param newContent - New content to append
+ * @param newTags - New tags to merge
+ * @returns true if successful, false on failure
+ */
+export function appendToExistingNote(
+	notePath: string,
+	newContent: string,
+	newTags: string[]
+): boolean {
+	const logger = createLogger({ verbose: false });
+
+	try {
+		// Read existing note
+		const note = readNote(notePath);
+		if (!note) {
+			logger.error("Failed to read note for appending", { notePath });
+			return false;
+		}
+
+		// Update frontmatter
+		const updated = new Date().toISOString();
+		const entryCount = (note.frontmatter.entry_count || 0) + 1;
+
+		// Merge tags (unique union)
+		const existingTags = note.frontmatter.tags || [];
+		const mergedTags = Array.from(new Set([...existingTags, ...newTags]));
+
+		// Build updated frontmatter (preserve all fields)
+		const updatedFrontmatter: NoteFrontmatter = {
+			...note.frontmatter,
+			updated,
+			tags: mergedTags,
+			entry_count: entryCount,
+		};
+
+		// Build new entry with timestamp
+		const now = new Date();
+		const timestamp = `${now.toISOString().split("T")[0]} ${now.toTimeString().substring(0, 5)}`;
+		const newEntry = `\n\n---\n\n## Entry: ${timestamp}\n\n${newContent}`;
+
+		// Append to content
+		const updatedContent = note.content + newEntry;
+
+		// Write updated note
+		const success = writeNote(notePath, updatedFrontmatter, updatedContent);
+
+		if (!success) {
+			logger.error("Failed to write appended note", { notePath });
+		}
+
+		return success;
+	} catch (error) {
+		logger.error("Error appending to existing note", {
+			error,
+			notePath,
+		});
+		return false;
+	}
+}
+
+/**
  * Ensure project structure exists with all index files
  * @param project - The project name (will be normalized to filesystem-safe slug)
  * @returns The normalized slug used for the project folder
@@ -578,6 +703,12 @@ export function ensureProjectStructure(project: string): string {
 				mkdirSync(categoryPath, { recursive: true });
 			}
 			createCategoryIndex(categoryPath, category, slug, memFolder);
+		}
+
+		// Create canvases folder separately (not a knowledge category)
+		const canvasesPath = join(projectPath, "canvases");
+		if (!existsSync(canvasesPath)) {
+			mkdirSync(canvasesPath, { recursive: true });
 		}
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);

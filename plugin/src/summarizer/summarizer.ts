@@ -17,7 +17,13 @@ import {
 } from "../sqlite/session-store.js";
 import { loadConfig, getConfigDir, AGENT_SESSION_MARKER } from "../shared/config.js";
 import { createLogger, Logger } from "../shared/logger.js";
-import { ensureProjectStructure, buildParentLink } from "../vault/vault-manager.js";
+import {
+	ensureProjectStructure,
+	buildParentLink,
+	findExistingTopicNote,
+	appendToExistingNote,
+} from "../vault/vault-manager.js";
+import { generateFilename } from "../vault/note-builder.js";
 import {
 	KNOWLEDGE_EXTRACTION_SYSTEM_PROMPT,
 	buildSessionPrompt,
@@ -142,7 +148,9 @@ export async function summarizeSession(
 					projectSlug,
 					memFolder
 				);
-				writtenNotes.push(notePath);
+				if (notePath) {
+					writtenNotes.push(notePath);
+				}
 			}
 		}
 
@@ -157,7 +165,9 @@ export async function summarizeSession(
 					projectSlug,
 					memFolder
 				);
-				writtenNotes.push(notePath);
+				if (notePath) {
+					writtenNotes.push(notePath);
+				}
 			}
 		}
 
@@ -173,7 +183,9 @@ export async function summarizeSession(
 					projectSlug,
 					memFolder
 				);
-				writtenNotes.push(notePath);
+				if (notePath) {
+					writtenNotes.push(notePath);
+				}
 			}
 		}
 
@@ -188,7 +200,9 @@ export async function summarizeSession(
 					projectSlug,
 					memFolder
 				);
-				writtenNotes.push(notePath);
+				if (notePath) {
+					writtenNotes.push(notePath);
+				}
 			}
 		}
 
@@ -204,7 +218,9 @@ export async function summarizeSession(
 					projectSlug,
 					memFolder
 				);
-				writtenNotes.push(notePath);
+				if (notePath) {
+					writtenNotes.push(notePath);
+				}
 			}
 		}
 
@@ -368,7 +384,8 @@ function ensureDirectories(projectPath: string): void {
 }
 
 /**
- * Write a knowledge note to the vault
+ * Write a knowledge note to the vault (with topic-based deduplication)
+ * Checks for existing notes with same topic slug and appends if found
  */
 function writeKnowledgeNote(
 	projectPath: string,
@@ -378,32 +395,43 @@ function writeKnowledgeNote(
 	tags: string[],
 	project: string,
 	memFolder: string
-): string {
-	const timestamp = new Date().toISOString().split("T")[0];
-	const safeTitle = title
-		.toLowerCase()
-		.replace(/[^a-z0-9]+/g, "-")
-		.substring(0, 50);
-	const filename = `${timestamp}_${safeTitle}.md`;
-	const filePath = join(projectPath, category, filename);
+): string | null {
+	try {
+		// Check for existing note with same topic
+		const existingNotePath = findExistingTopicNote(projectPath, category, title);
 
-	const parentLink = buildParentLink(memFolder, project, category);
-	const frontmatter = `---
+		if (existingNotePath) {
+			// Append to existing note
+			const success = appendToExistingNote(existingNotePath, content, tags);
+			return success ? existingNotePath : null;
+		}
+
+		// Create new note with topic-based filename
+		const filename = generateFilename(title);
+		const filePath = join(projectPath, category, filename);
+
+		const parentLink = buildParentLink(memFolder, project, category);
+		const frontmatter = `---
 type: ${category === "research" ? "learning" : category.slice(0, -1)}
 title: "${title.replace(/"/g, '\\"')}"
-project: ${project}
+project: "${project}"
 created: ${new Date().toISOString()}
 tags: [${tags.map((t) => `"${t}"`).join(", ")}]
 status: active
 parent: "${parentLink}"
+entry_count: 1
 ---
 
 `;
 
-	const fullContent = frontmatter + content;
-	writeFileSync(filePath, fullContent, "utf-8");
+		const fullContent = frontmatter + content;
+		writeFileSync(filePath, fullContent, "utf-8");
 
-	return filePath;
+		return filePath;
+	} catch (error) {
+		console.error("Failed to write knowledge note", { error, projectPath, category, title });
+		return null;
+	}
 }
 
 /**

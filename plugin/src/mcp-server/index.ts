@@ -19,7 +19,17 @@ import {
 	getProjectContext,
 	getProjectPath,
 	getMemFolderPath,
+	findExistingTopicNote,
+	appendToExistingNote,
+	ensureProjectStructure,
+	slugifyProjectName,
 } from "../vault/vault-manager.js";
+import {
+	generateAllCanvases,
+	generateDashboardCanvas,
+	generateTimelineCanvas,
+	generateGraphCanvas,
+} from "../vault/canvas.js";
 import {
 	buildFrontmatter,
 	generateFilename,
@@ -157,19 +167,19 @@ async function main() {
 	);
 
 	// ========================================================================
-	// mem_write - Create a knowledge note
+	// mem_write - Create a knowledge note (with topic deduplication)
 	// ========================================================================
 	server.registerTool(
 		"mem_write",
 		{
 			title: "Write Note",
 			description:
-				"Create or update a note in the knowledge base. Use for saving decisions, patterns, learnings, or custom content.",
+				"Create or update a note in the knowledge base. Use for saving decisions, patterns, learnings, or custom content. Automatically appends to existing notes with the same topic.",
 			inputSchema: {
 				type: z
 					.enum(["error", "decision", "pattern", "file", "learning"])
 					.describe("Type of note to create"),
-				title: z.string().describe("Title for the note"),
+				title: z.string().min(1).describe("Title for the note"),
 				content: z.string().describe("Markdown content for the note"),
 				project: z.string().optional().describe("Project name to associate with"),
 				tags: z.array(z.string()).optional().describe("Additional tags"),
@@ -182,11 +192,42 @@ async function main() {
 		async ({ type, title, content, project, tags, status }): Promise<ToolResult> => {
 			logger.debug("mem_write called", { type, title, project });
 
+			// Input validation
+			if (!title || title.trim().length === 0) {
+				return {
+					content: [{ type: "text", text: "Error: title cannot be empty" }],
+					isError: true,
+				};
+			}
+
 			try {
 				const projectName = project || config.defaultProject || "default";
 				const folder = noteTypeToFolder(type as NoteType);
+
+				// Ensure project structure exists
+				const projectSlug = ensureProjectStructure(projectName);
+				const projectPath = getProjectPath(projectSlug);
+
+				// Check for existing note with same topic (deduplication)
+				const existingNotePath = findExistingTopicNote(projectPath, folder, title);
+
+				if (existingNotePath) {
+					// Append to existing note
+					const success = appendToExistingNote(existingNotePath, content, tags || []);
+					if (success) {
+						return {
+							content: [{ type: "text", text: `Appended to existing note: ${existingNotePath}` }],
+						};
+					} else {
+						return {
+							content: [{ type: "text", text: "Failed to append to existing note" }],
+							isError: true,
+						};
+					}
+				}
+
+				// Create new note
 				const filename = generateFilename(title);
-				const projectPath = getProjectPath(projectName);
 				const notePath = join(projectPath, folder, filename);
 
 				// Ensure directory exists
@@ -198,11 +239,14 @@ async function main() {
 				const frontmatter = buildFrontmatter({
 					type: type as NoteType,
 					title,
-					project: projectName,
+					project: projectSlug,
 					tags,
 					status: status as any,
-					parent: getParentLink(projectName, folder),
+					parent: getParentLink(projectSlug, folder),
 				});
+
+				// Add entry_count for new notes
+				(frontmatter as any).entry_count = 1;
 
 				const success = writeNote(notePath, frontmatter, content);
 
@@ -227,22 +271,22 @@ async function main() {
 	);
 
 	// ========================================================================
-	// mem_write_knowledge - Write knowledge extracted from conversations
+	// mem_write_knowledge - Write knowledge extracted from conversations (with deduplication)
 	// ========================================================================
 	server.registerTool(
 		"mem_write_knowledge",
 		{
 			title: "Write Knowledge",
 			description:
-				"Write knowledge extracted from conversations (Q&A, explanations, research, learnings). Routes to /research folder. Sets knowledge_type in frontmatter for filtered searches.",
+				"Write knowledge extracted from conversations (Q&A, explanations, research, learnings). Routes to /research folder. Sets knowledge_type in frontmatter for filtered searches. Automatically appends to existing notes with the same topic.",
 			inputSchema: {
 				type: z
 					.enum(["qa", "explanation", "decision", "research", "learning"])
 					.describe("Type of knowledge"),
-				title: z.string().describe("Title for the knowledge note"),
+				title: z.string().min(1).describe("Title for the knowledge note"),
 				context: z.string().describe("When this knowledge is useful (1 sentence)"),
-				content: z.string().describe("Main content/summary of the knowledge"),
-				project: z.string().describe("Project name to associate with"),
+				content: z.string().min(1).describe("Main content/summary of the knowledge"),
+				project: z.string().min(1).describe("Project name to associate with"),
 				topics: z.array(z.string()).optional().describe("Topic tags for categorization (2-5 items)"),
 				keyPoints: z.array(z.string()).optional().describe("Key actionable points (2-5 items)"),
 			},
@@ -250,17 +294,32 @@ async function main() {
 		async ({ type, title, context, content, project, topics, keyPoints }): Promise<ToolResult> => {
 			logger.debug("mem_write_knowledge called", { type, title, project });
 
+			// Input validation
+			if (!title || title.trim().length === 0) {
+				return {
+					content: [{ type: "text", text: "Error: title cannot be empty" }],
+					isError: true,
+				};
+			}
+			if (!content || content.trim().length === 0) {
+				return {
+					content: [{ type: "text", text: "Error: content cannot be empty" }],
+					isError: true,
+				};
+			}
+			if (!project || project.trim().length === 0) {
+				return {
+					content: [{ type: "text", text: "Error: project cannot be empty" }],
+					isError: true,
+				};
+			}
+
 			try {
 				const folder = "research";
-				const filename = generateFilename(title);
-				const projectPath = getProjectPath(project);
-				const notePath = join(projectPath, folder, filename);
 
-				// Ensure directory exists
-				const dir = dirname(notePath);
-				if (!existsSync(dir)) {
-					mkdirSync(dir, { recursive: true });
-				}
+				// Ensure project structure exists
+				const projectSlug = ensureProjectStructure(project);
+				const projectPath = getProjectPath(projectSlug);
 
 				// Build content with key points if provided
 				let fullContent = `## Context\n${context}\n\n## Content\n${content}`;
@@ -270,14 +329,45 @@ async function main() {
 					fullContent += keyPoints.map((p) => `- ${p}`).join("\n");
 				}
 
+				// Check for existing note with same topic (deduplication)
+				const existingNotePath = findExistingTopicNote(projectPath, folder, title);
+
+				if (existingNotePath) {
+					// Append to existing note
+					const success = appendToExistingNote(existingNotePath, fullContent, topics || []);
+					if (success) {
+						return {
+							content: [{ type: "text", text: `Appended to existing knowledge note: ${existingNotePath}` }],
+						};
+					} else {
+						return {
+							content: [{ type: "text", text: "Failed to append to existing knowledge note" }],
+							isError: true,
+						};
+					}
+				}
+
+				// Create new note
+				const filename = generateFilename(title);
+				const notePath = join(projectPath, folder, filename);
+
+				// Ensure directory exists
+				const dir = dirname(notePath);
+				if (!existsSync(dir)) {
+					mkdirSync(dir, { recursive: true });
+				}
+
 				const frontmatter = buildFrontmatter({
 					type: "learning",
 					title,
-					project,
+					project: projectSlug,
 					tags: topics,
 					knowledge_type: type,
-					parent: getParentLink(project, folder),
+					parent: getParentLink(projectSlug, folder),
 				});
+
+				// Add entry_count for new notes
+				(frontmatter as any).entry_count = 1;
 
 				const success = writeNote(notePath, frontmatter, fullContent);
 
@@ -491,6 +581,96 @@ async function main() {
 				logger.error("mem_list_projects error", { error });
 				return {
 					content: [{ type: "text", text: `List error: ${error}` }],
+					isError: true,
+				};
+			}
+		}
+	);
+
+	// ========================================================================
+	// mem_generate_canvas - Generate Obsidian canvas visualizations
+	// ========================================================================
+	server.registerTool(
+		"mem_generate_canvas",
+		{
+			title: "Generate Canvas",
+			description:
+				"Generate Obsidian canvas visualizations for a project. Creates dashboard (grid layout), timeline (chronological decisions), and graph (radial knowledge graph) canvases.",
+			inputSchema: {
+				project: z.string().min(1).describe("Project name"),
+				canvas_type: z
+					.enum(["dashboard", "timeline", "graph", "all"])
+					.default("all")
+					.describe("Type of canvas to generate (default: all)"),
+			},
+		},
+		async ({ project, canvas_type }): Promise<ToolResult> => {
+			logger.debug("mem_generate_canvas called", { project, canvas_type });
+
+			// Input validation
+			if (!project || project.trim().length === 0) {
+				return {
+					content: [{ type: "text", text: "Error: project cannot be empty" }],
+					isError: true,
+				};
+			}
+
+			try {
+				// Check if project exists - validate slug is non-empty after normalization
+				const projectSlug = slugifyProjectName(project);
+
+				if (projectSlug.length === 0) {
+					return {
+						content: [{ type: "text", text: `Error: invalid project name '${project}'. Name must contain at least one alphanumeric character.` }],
+						isError: true,
+					};
+				}
+
+				const projectPath = getProjectPath(projectSlug);
+
+				if (!existsSync(projectPath)) {
+					return {
+						content: [{ type: "text", text: `Error: project '${project}' not found` }],
+						isError: true,
+					};
+				}
+
+				let generatedPaths: string[] = [];
+
+				switch (canvas_type) {
+					case "dashboard":
+						generatedPaths = generateDashboardCanvas(projectSlug);
+						break;
+					case "timeline":
+						generatedPaths = generateTimelineCanvas(projectSlug);
+						break;
+					case "graph":
+						generatedPaths = generateGraphCanvas(projectSlug);
+						break;
+					case "all":
+					default:
+						generatedPaths = generateAllCanvases(projectSlug);
+						break;
+				}
+
+				if (generatedPaths.length === 0) {
+					return {
+						content: [{ type: "text", text: "No canvases generated (possibly skipped due to updateStrategy)" }],
+					};
+				}
+
+				return {
+					content: [
+						{
+							type: "text",
+							text: `Generated ${generatedPaths.length} canvas(es):\n${generatedPaths.map((p) => `- ${p}`).join("\n")}`,
+						},
+					],
+				};
+			} catch (error) {
+				logger.error("mem_generate_canvas error", { error });
+				return {
+					content: [{ type: "text", text: `Canvas generation error: ${error}` }],
 					isError: true,
 				};
 			}

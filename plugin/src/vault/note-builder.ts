@@ -37,17 +37,26 @@ export function buildFrontmatter(options: {
 }
 
 /**
- * Generate safe filename from title
+ * Generate safe filename from title (topic-based, no date prefix)
+ * Uses same sanitization as slugifyProjectName() to prevent path traversal
+ * @throws Error if title contains no alphanumeric characters
  */
 export function generateFilename(title: string): string {
-	const date = new Date().toISOString().split("T")[0];
 	const safeTitle = title
 		.toLowerCase()
-		.replace(/[^a-z0-9]+/g, "-")
-		.replace(/^-|-$/g, "")
-		.substring(0, 50);
+		.replace(/\s+/g, "-") // Replace spaces with hyphens
+		.replace(/\.+/g, "-") // Replace dots with hyphens
+		.replace(/[^a-z0-9_-]/g, "") // Remove special chars (including path separators)
+		.replace(/-+/g, "-") // Collapse multiple hyphens
+		.replace(/^-|-$/g, "") // Trim leading/trailing hyphens
+		.substring(0, 50); // Limit length
 
-	return `${date}_${safeTitle}.md`;
+	// Validate slug is non-empty to prevent creating ".md" files
+	if (safeTitle.length === 0) {
+		throw new Error(`Invalid title: "${title}". Title must contain at least one alphanumeric character.`);
+	}
+
+	return `${safeTitle}.md`;
 }
 
 /**

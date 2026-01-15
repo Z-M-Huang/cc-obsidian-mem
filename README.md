@@ -377,11 +377,31 @@ cc-obsidian-mem/
 │   │   └── scripts/         # Hook scripts
 │   ├── scripts/             # Utility scripts
 │   ├── skills/              # Skill definitions
+│   ├── tests/               # Test files
 │   └── src/
-│       ├── mcp-server/      # MCP server + index-manager
-│       ├── services/        # AI services + transcript parsing
-│       └── shared/          # Types, config, schemas, file-utils
+│       ├── vault/           # Vault management (read/write/search), canvas generation
+│       ├── summarizer/      # AI-powered knowledge extraction
+│       ├── mcp-server/      # MCP tools (mem_search, mem_write, etc.)
+│       ├── session-end/     # Background session processing
+│       ├── sqlite/          # SQLite database operations
+│       ├── context/         # Context injection for prompts
+│       ├── sdk/             # SDK agent integration
+│       ├── shared/          # Types, config, validation, logging
+│       ├── cli/             # Setup CLI
+│       ├── fallback/        # JSON fallback storage
+│       └── worker/          # Background worker service
 ```
+
+### Topic-Based Filenames (Deduplication)
+
+Knowledge notes use **topic-based filenames** instead of date-prefixed filenames. This prevents duplicate notes on the same topic:
+
+- Notes are named `authentication-bug.md` instead of `2026-01-15_authentication-bug.md`
+- When new knowledge matches an existing topic, it's **appended** to the existing note
+- Each entry within a note has a timestamp header (`## Entry: YYYY-MM-DD HH:MM`)
+- Matching uses exact slug comparison within the same category (case-insensitive)
+
+**Migration for existing vaults**: Existing date-prefixed notes continue to work. New knowledge will use topic-based filenames. You can manually merge duplicate notes if desired.
 
 ### Running Tests
 
