@@ -16,6 +16,11 @@ import { loadConfig } from "../shared/config.js";
 import { validatePath } from "../shared/security.js";
 import type { NoteFrontmatter } from "../shared/types.js";
 
+/**
+ * List of valid category names for project structure
+ */
+export const CATEGORIES = ["research", "decisions", "errors", "patterns", "knowledge", "sessions"] as const;
+
 export interface SearchResult {
 	path: string;
 	title: string;
@@ -428,6 +433,158 @@ export function getProjectContext(
 	}
 
 	return result;
+}
+
+/**
+ * Build a parent link in Obsidian wikilink format
+ * @param memFolder - The memory folder name (e.g., "_claude-mem")
+ * @param project - The project name
+ * @param category - Optional category name (if omitted, returns project link)
+ * @returns Formatted parent link string
+ */
+export function buildParentLink(memFolder: string, project: string, category?: string): string {
+	if (category) {
+		return `[[${memFolder}/projects/${project}/${category}/${category}]]`;
+	}
+	return `[[${memFolder}/projects/${project}/${project}]]`;
+}
+
+/**
+ * Normalize a project name to a filesystem-safe slug
+ * @param name - The original project name (may contain spaces, dots, etc.)
+ * @returns Normalized slug (lowercase alphanumeric, hyphens, underscores only)
+ */
+export function slugifyProjectName(name: string): string {
+	return name
+		.toLowerCase()
+		.replace(/\s+/g, "-") // Replace spaces with hyphens
+		.replace(/\.+/g, "-") // Replace dots with hyphens
+		.replace(/[^a-z0-9_-]/g, "") // Remove other special chars
+		.replace(/-+/g, "-") // Collapse multiple hyphens
+		.replace(/^-|-$/g, ""); // Trim leading/trailing hyphens
+}
+
+/**
+ * Validate project name for security threats only
+ * @throws Error if project name contains path traversal attempts
+ */
+function validateProjectName(name: string): void {
+	if (!name || name.trim().length === 0) {
+		throw new Error("Project name cannot be empty");
+	}
+	// Check for path traversal attempts
+	if (name.includes("..") || name.includes("/") || name.includes("\\")) {
+		throw new Error(
+			`Invalid project name: "${name}". Path separators and ".." are not allowed.`
+		);
+	}
+	// Ensure slugified name has content
+	const slug = slugifyProjectName(name);
+	if (slug.length === 0) {
+		throw new Error(
+			`Invalid project name: "${name}". Name must contain at least one alphanumeric character.`
+		);
+	}
+}
+
+/**
+ * Create project index file
+ */
+function createProjectIndex(
+	projectPath: string,
+	slug: string,
+	memFolder: string
+): void {
+	const projectIndexPath = join(projectPath, `${slug}.md`);
+	if (existsSync(projectIndexPath)) {
+		return;
+	}
+	const categoryLinks = CATEGORIES.map(
+		(cat) =>
+			`- [[${memFolder}/projects/${slug}/${cat}/${cat}|${cat.charAt(0).toUpperCase() + cat.slice(1)}]]`
+	).join("\n");
+
+	const content = `---
+type: "project"
+title: "${slug}"
+created: "${new Date().toISOString()}"
+status: "active"
+---
+
+# ${slug}
+
+## Categories
+
+${categoryLinks}
+`;
+	writeFileSync(projectIndexPath, content, "utf-8");
+}
+
+/**
+ * Create category index file
+ */
+function createCategoryIndex(
+	categoryPath: string,
+	category: string,
+	slug: string,
+	memFolder: string
+): void {
+	const categoryIndexPath = join(categoryPath, `${category}.md`);
+	if (existsSync(categoryIndexPath)) {
+		return;
+	}
+	const parentLink = buildParentLink(memFolder, slug);
+	const content = `---
+type: "index"
+title: "${category.charAt(0).toUpperCase() + category.slice(1)}"
+project: "${slug}"
+created: "${new Date().toISOString()}"
+parent: "${parentLink}"
+---
+
+# ${category.charAt(0).toUpperCase() + category.slice(1)}
+
+Notes in this category will be listed below.
+`;
+	writeFileSync(categoryIndexPath, content, "utf-8");
+}
+
+/**
+ * Ensure project structure exists with all index files
+ * @param project - The project name (will be normalized to filesystem-safe slug)
+ * @returns The normalized slug used for the project folder
+ */
+export function ensureProjectStructure(project: string): string {
+	validateProjectName(project);
+	const slug = slugifyProjectName(project);
+
+	const config = loadConfig();
+	const memFolder = config.vault.memFolder || "_claude-mem";
+	const projectPath = getProjectPath(slug);
+
+	try {
+		// Ensure project directory exists
+		if (!existsSync(projectPath)) {
+			mkdirSync(projectPath, { recursive: true });
+		}
+
+		// Create project index file
+		createProjectIndex(projectPath, slug, memFolder);
+
+		// Create category directories and index files
+		for (const category of CATEGORIES) {
+			const categoryPath = join(projectPath, category);
+			if (!existsSync(categoryPath)) {
+				mkdirSync(categoryPath, { recursive: true });
+			}
+			createCategoryIndex(categoryPath, category, slug, memFolder);
+		}
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		throw new Error(`Failed to create project structure for "${project}": ${message}`);
+	}
+
+	return slug;
 }
 
 /**

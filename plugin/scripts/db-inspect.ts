@@ -16,10 +16,11 @@
  *   bun scripts/db-inspect.ts validate           # Test validation schemas
  *   bun scripts/db-inspect.ts cleanup            # Clean up stale data
  *   bun scripts/db-inspect.ts recent             # Quick view of recent activity across all tables
+ *   bun scripts/db-inspect.ts check              # Validate plugin installation and schema
  */
 
 import { Database } from "bun:sqlite";
-import { existsSync } from "fs";
+import { existsSync, readdirSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
 import {
@@ -30,6 +31,7 @@ import {
 
 const CONFIG_DIR = join(homedir(), ".cc-obsidian-mem");
 const DB_PATH = join(CONFIG_DIR, "sessions.db");
+const LOCKS_DIR = join(CONFIG_DIR, "locks");
 
 function getDb(): Database | null {
 	if (!existsSync(DB_PATH)) {
@@ -809,6 +811,152 @@ function cleanup() {
 	db.close();
 }
 
+function checkPluginSetup() {
+	console.log("🔍 Plugin Installation Check");
+	console.log("=".repeat(80));
+
+	const issues: string[] = [];
+	const warnings: string[] = [];
+
+	// 1. Check config directory
+	console.log("\n📁 Config Directory");
+	console.log("-".repeat(80));
+	console.log(`  Path: ${CONFIG_DIR}`);
+	if (existsSync(CONFIG_DIR)) {
+		console.log("  ✅ Exists");
+	} else {
+		console.log("  ❌ Missing");
+		issues.push("Config directory does not exist");
+	}
+
+	// 2. Check database
+	console.log("\n💾 Database");
+	console.log("-".repeat(80));
+	console.log(`  Path: ${DB_PATH}`);
+	if (existsSync(DB_PATH)) {
+		console.log("  ✅ Exists");
+	} else {
+		console.log("  ❌ Missing");
+		issues.push("Database file does not exist");
+	}
+
+	// 3. Check locks directory
+	console.log("\n🔒 Locks Directory");
+	console.log("-".repeat(80));
+	console.log(`  Path: ${LOCKS_DIR}`);
+	if (existsSync(LOCKS_DIR)) {
+		console.log("  ✅ Exists");
+		try {
+			const lockFiles = readdirSync(LOCKS_DIR).filter(f => f.endsWith(".lock"));
+			console.log(`  📋 Lock files: ${lockFiles.length}`);
+			if (lockFiles.length > 0) {
+				for (const f of lockFiles) {
+					console.log(`     - ${f}`);
+				}
+			}
+		} catch (e) {
+			console.log(`  ⚠️  Cannot read directory: ${e}`);
+		}
+	} else {
+		console.log("  ⚠️  Missing (will be created on first session-end)");
+		warnings.push("Locks directory does not exist yet (normal for fresh install)");
+	}
+
+	// 4. Check database schema
+	if (existsSync(DB_PATH)) {
+		const db = getDb();
+		if (db) {
+			console.log("\n📊 Database Schema");
+			console.log("-".repeat(80));
+
+			// Check sessions table columns
+			try {
+				const tableInfo = db.query("PRAGMA table_info(sessions)").all() as Array<{
+					cid: number;
+					name: string;
+					type: string;
+					notnull: number;
+					dflt_value: string | null;
+					pk: number;
+				}>;
+
+				const columns = tableInfo.map(c => c.name);
+				console.log("  Sessions table columns:");
+				for (const col of tableInfo) {
+					console.log(`    - ${col.name.padEnd(25)} ${col.type.padEnd(10)} ${col.notnull ? "NOT NULL" : "NULL"}`);
+				}
+
+				// Check for processing_started_at column (new in v4)
+				if (columns.includes("processing_started_at")) {
+					console.log("\n  ✅ processing_started_at column exists (v4 migration applied)");
+				} else {
+					console.log("\n  ❌ processing_started_at column MISSING (v4 migration not applied)");
+					issues.push("Database missing processing_started_at column - migration may have failed");
+				}
+			} catch (e) {
+				console.log(`  ❌ Failed to read schema: ${e}`);
+				issues.push("Cannot read database schema");
+			}
+
+			// 5. Check recent sessions with new column
+			console.log("\n📋 Recent Sessions (with processing_started_at)");
+			console.log("-".repeat(80));
+			try {
+				const sessions = db.query(`
+					SELECT session_id, project, status, processing_started_at, started_at
+					FROM sessions
+					ORDER BY started_at_epoch DESC
+					LIMIT 5
+				`).all() as Array<{
+					session_id: string;
+					project: string;
+					status: string;
+					processing_started_at: number | null;
+					started_at: string;
+				}>;
+
+				if (sessions.length === 0) {
+					console.log("  (no sessions yet)");
+				} else {
+					for (const s of sessions) {
+						const statusIcon = s.status === "active" ? "🟢" : s.status === "completed" ? "✅" : "❌";
+						const procTime = s.processing_started_at
+							? new Date(s.processing_started_at).toLocaleString()
+							: "NULL";
+						console.log(`  ${statusIcon} ${s.session_id.substring(0, 8)}... | ${s.project.padEnd(18)} | proc: ${procTime}`);
+					}
+				}
+			} catch (e) {
+				console.log(`  ❌ Query failed: ${e}`);
+			}
+
+			db.close();
+		}
+	}
+
+	// Summary
+	console.log("\n" + "=".repeat(80));
+	console.log("📊 CHECK SUMMARY");
+	console.log("=".repeat(80));
+
+	if (issues.length === 0 && warnings.length === 0) {
+		console.log("✅ All checks passed - plugin is correctly installed");
+	} else {
+		if (issues.length > 0) {
+			console.log("\n❌ Issues found:");
+			for (const issue of issues) {
+				console.log(`   - ${issue}`);
+			}
+		}
+		if (warnings.length > 0) {
+			console.log("\n⚠️  Warnings:");
+			for (const warning of warnings) {
+				console.log(`   - ${warning}`);
+			}
+		}
+	}
+}
+
 // Main
 const command = process.argv[2] || "summary";
 
@@ -845,6 +993,9 @@ switch (command) {
 		break;
 	case "recent":
 		showRecent();
+		break;
+	case "check":
+		checkPluginSetup();
 		break;
 	case "summary":
 	default:

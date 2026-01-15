@@ -17,6 +17,7 @@ import {
 } from "../sqlite/session-store.js";
 import { loadConfig, getConfigDir, AGENT_SESSION_MARKER } from "../shared/config.js";
 import { createLogger, Logger } from "../shared/logger.js";
+import { ensureProjectStructure, buildParentLink } from "../vault/vault-manager.js";
 import {
 	KNOWLEDGE_EXTRACTION_SYSTEM_PROMPT,
 	buildSessionPrompt,
@@ -124,12 +125,12 @@ export async function summarizeSession(
 		// Write knowledge to vault
 		const vaultPath = config.vault.path;
 		const memFolder = config.vault.memFolder || "_claude-mem";
-		const projectPath = join(vaultPath, memFolder, "projects", session.project);
 
-		// Ensure directories exist
-		ensureDirectories(projectPath);
+		// Ensure project structure exists and get normalized slug
+		const projectSlug = ensureProjectStructure(session.project);
+		const projectPath = join(vaultPath, memFolder, "projects", projectSlug);
 
-		// Write each type of knowledge
+		// Write each type of knowledge (use slug for consistent paths)
 		if (knowledge.decisions.length > 0) {
 			for (const decision of knowledge.decisions) {
 				const notePath = writeKnowledgeNote(
@@ -138,7 +139,8 @@ export async function summarizeSession(
 					decision.title,
 					decision.content,
 					decision.tags,
-					session.project
+					projectSlug,
+					memFolder
 				);
 				writtenNotes.push(notePath);
 			}
@@ -152,7 +154,8 @@ export async function summarizeSession(
 					pattern.title,
 					pattern.content,
 					pattern.tags,
-					session.project
+					projectSlug,
+					memFolder
 				);
 				writtenNotes.push(notePath);
 			}
@@ -167,7 +170,8 @@ export async function summarizeSession(
 					error.title,
 					content,
 					error.tags,
-					session.project
+					projectSlug,
+					memFolder
 				);
 				writtenNotes.push(notePath);
 			}
@@ -181,7 +185,8 @@ export async function summarizeSession(
 					learning.title,
 					learning.content,
 					learning.tags,
-					session.project
+					projectSlug,
+					memFolder
 				);
 				writtenNotes.push(notePath);
 			}
@@ -196,7 +201,8 @@ export async function summarizeSession(
 					`QA: ${qa.question.substring(0, 50)}`,
 					content,
 					qa.tags,
-					session.project
+					projectSlug,
+					memFolder
 				);
 				writtenNotes.push(notePath);
 			}
@@ -370,7 +376,8 @@ function writeKnowledgeNote(
 	title: string,
 	content: string,
 	tags: string[],
-	project: string
+	project: string,
+	memFolder: string
 ): string {
 	const timestamp = new Date().toISOString().split("T")[0];
 	const safeTitle = title
@@ -380,6 +387,7 @@ function writeKnowledgeNote(
 	const filename = `${timestamp}_${safeTitle}.md`;
 	const filePath = join(projectPath, category, filename);
 
+	const parentLink = buildParentLink(memFolder, project, category);
 	const frontmatter = `---
 type: ${category === "research" ? "learning" : category.slice(0, -1)}
 title: "${title.replace(/"/g, '\\"')}"
@@ -387,7 +395,7 @@ project: ${project}
 created: ${new Date().toISOString()}
 tags: [${tags.map((t) => `"${t}"`).join(", ")}]
 status: active
-parent: "[[${project}/${category}/${category}]]"
+parent: "${parentLink}"
 ---
 
 `;
