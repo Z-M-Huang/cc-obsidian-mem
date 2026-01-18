@@ -37,7 +37,9 @@ Obsidian-based persistent memory system for Claude Code. Automatically captures 
 - [Bun](https://bun.sh/) runtime installed
 - [Obsidian](https://obsidian.md/) with an existing vault
 - [Dataview plugin](https://github.com/blacksmithgu/obsidian-dataview) (recommended for dashboards)
-- Claude Code CLI
+- Claude Code CLI **v1.0.29 or later** (required for `--no-session-persistence` flag)
+  - Check your version: `claude --version`
+  - Upgrade if needed: `npm install -g @anthropic-ai/claude-code`
 
 ### Step 1: Install the Plugin
 
@@ -348,6 +350,40 @@ For detailed troubleshooting, see the [Troubleshooting Wiki](https://github.com/
 ```
 
 Then view: `tail -f /tmp/cc-obsidian-mem-*.log`
+
+### `--continue` picks up wrong session
+
+If Claude's `--continue` command picks up an agent session instead of your actual conversation, this is caused by polluted session files from cc-obsidian-mem's background processes.
+
+**This was fixed in v1.0.4+** by using the `--no-session-persistence` flag. The cleanup below is only needed for sessions created with older versions.
+
+**Option 1: Delete all session history (simplest)**
+
+This removes all Claude Code session history. You won't be able to `--continue` any previous sessions.
+
+- **Windows:** Delete all contents in `%USERPROFILE%\.claude\projects`
+- **macOS/Linux:** `rm -rf ~/.claude/projects/*`
+
+**Option 2: Targeted cleanup (preserves other sessions)**
+
+Only removes sessions polluted by cc-obsidian-mem:
+
+**Windows (PowerShell):**
+
+```powershell
+Get-ChildItem "$env:USERPROFILE\.claude\projects" -Recurse -Filter "*.jsonl" |
+  Where-Object { (Get-Content $_.FullName -Raw) -match "cc-mem-agent|cc-obsidian-mem-" } |
+  Remove-Item -Force
+Get-ChildItem "$env:USERPROFILE\.claude\projects" -Recurse -Filter "sessions-index.json" |
+  Remove-Item -Force
+```
+
+**macOS/Linux:**
+
+```bash
+grep -rl "cc-mem-agent\|cc-obsidian-mem-" ~/.claude/projects --include="*.jsonl" | xargs rm -f
+find ~/.claude/projects -name "sessions-index.json" -delete
+```
 
 ---
 
