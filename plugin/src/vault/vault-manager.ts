@@ -20,7 +20,18 @@ import type { NoteFrontmatter } from "../shared/types.js";
 /**
  * List of valid category names for project structure
  */
-export const CATEGORIES = ["research", "decisions", "errors", "patterns", "knowledge", "sessions"] as const;
+export const CATEGORIES = ["research", "decisions", "errors", "patterns", "knowledge", "sessions", "files"] as const;
+
+/**
+ * Common stopwords to filter out when comparing topic similarity
+ */
+const STOPWORDS = new Set([
+	"for", "the", "in", "a", "an", "to", "of", "and", "is", "are", "with", "on", "at",
+	"by", "from", "as", "it", "that", "this", "be", "was", "were", "been", "being",
+	"have", "has", "had", "do", "does", "did", "will", "would", "could", "should",
+	"may", "might", "must", "can", "how", "what", "when", "where", "why", "which",
+	"who", "whom"
+]);
 
 export interface SearchResult {
 	path: string;
@@ -34,6 +45,12 @@ export interface NoteContent {
 	frontmatter: NoteFrontmatter;
 	content: string;
 	rawContent: string;
+}
+
+export interface SimilarTopicMatch {
+	path: string;
+	category: string;
+	score: number;
 }
 
 /**
@@ -747,4 +764,238 @@ function getRecentNotes(dir: string, limit: number): SearchResult[] {
 	} catch {
 		return [];
 	}
+}
+
+/**
+ * Extract significant words from a slug (filtering stopwords)
+ */
+function extractSignificantWords(slug: string): string[] {
+	if (!slug || slug.trim().length === 0) {
+		return [];
+	}
+
+	return slug
+		.toLowerCase()
+		.split("-")
+		.filter(word => word.length > 0 && !STOPWORDS.has(word));
+}
+
+/**
+ * Compute Jaccard similarity between two word sets
+ */
+function computeJaccardSimilarity(words1: string[], words2: string[]): number {
+	if (words1.length === 0 && words2.length === 0) {
+		return 0;
+	}
+
+	const set1 = new Set(words1);
+	const set2 = new Set(words2);
+
+	const intersection = [...set1].filter(w => set2.has(w)).length;
+	const union = new Set([...set1, ...set2]).size;
+
+	return union === 0 ? 0 : intersection / union;
+}
+
+/**
+ * Scan a category directory for notes (excluding index and archive)
+ */
+function scanCategoryForNotes(categoryPath: string, category: string, logger: ReturnType<typeof createLogger>): string[] {
+	if (!existsSync(categoryPath)) {
+		return [];
+	}
+
+	try {
+		const categoryIndexFile = `${category}.md`;
+		return readdirSync(categoryPath)
+			.filter(f => {
+				// Exclude category index file
+				if (f === categoryIndexFile) {
+					return false;
+				}
+				// Exclude .archive subdirectory
+				if (f === ".archive") {
+					return false;
+				}
+				// Only include .md files
+				if (!f.endsWith(".md")) {
+					return false;
+				}
+				// Verify entry is a file (not a directory or symlink)
+				try {
+					const stat = statSync(join(categoryPath, f));
+					return stat.isFile();
+				} catch {
+					return false;
+				}
+			});
+	} catch (error) {
+		logger.warn(`Failed to read category directory: ${categoryPath}`, { error });
+		return [];
+	}
+}
+
+/**
+ * Find existing note with similar topic across ALL categories
+ * Uses Jaccard word similarity to match topics with slightly different titles
+ */
+export function findSimilarTopicAcrossCategories(
+	projectPath: string,
+	title: string,
+	threshold: number = 0.6
+): SimilarTopicMatch | null {
+	const logger = createLogger({ verbose: false });
+
+	// Validate inputs
+	if (!title || title.trim().length === 0) {
+		return null;
+	}
+
+	if (!existsSync(projectPath)) {
+		return null;
+	}
+
+	// Validate and clamp threshold
+	if (typeof threshold !== "number" || isNaN(threshold)) {
+		threshold = 0.6;
+	}
+	threshold = Math.max(0, Math.min(1, threshold));
+
+	// Normalize title to slug (same as generateFilename)
+	const inputSlug = slugifyProjectName(title).substring(0, 50);
+	const inputWords = extractSignificantWords(inputSlug);
+
+	// If less than 2 significant words, fall back to exact slug matching
+	if (inputWords.length < 2) {
+		for (const category of CATEGORIES) {
+			const categoryPath = join(projectPath, category);
+			const files = scanCategoryForNotes(categoryPath, category, logger);
+
+			for (const file of files) {
+				const fileSlug = file.replace(/\.md$/, "");
+				if (fileSlug === inputSlug) {
+					return {
+						path: join(categoryPath, file),
+						category,
+						score: 1.0
+					};
+				}
+			}
+		}
+		return null;
+	}
+
+	// Find best match across all categories
+	let bestMatch: SimilarTopicMatch | null = null;
+	let bestScore = 0;
+
+	for (const category of CATEGORIES) {
+		const categoryPath = join(projectPath, category);
+		const files = scanCategoryForNotes(categoryPath, category, logger);
+
+		for (const file of files) {
+			const fileSlug = file.replace(/\.md$/, "");
+			const fileWords = extractSignificantWords(fileSlug);
+			const score = computeJaccardSimilarity(inputWords, fileWords);
+
+			if (score >= threshold) {
+				// Deterministic tie-breaking: higher score wins, alphabetical filename as tiebreaker
+				if (score > bestScore || (score === bestScore && (!bestMatch || file < basename(bestMatch.path)))) {
+					bestScore = score;
+					bestMatch = {
+						path: join(categoryPath, file),
+						category,
+						score
+					};
+				}
+			}
+		}
+	}
+
+	logger.debug("Found similar topic", {
+		input: title,
+		match: bestMatch ? { path: bestMatch.path, score: bestMatch.score } : null
+	});
+
+	return bestMatch;
+}
+
+/**
+ * Find existing note with similar topic within a SINGLE category
+ * Uses Jaccard word similarity to match topics with slightly different titles
+ */
+export function findSimilarTopicInCategory(
+	projectPath: string,
+	category: string,
+	title: string,
+	threshold: number = 0.6
+): SimilarTopicMatch | null {
+	const logger = createLogger({ verbose: false });
+
+	// Validate inputs
+	if (!title || title.trim().length === 0) {
+		return null;
+	}
+
+	if (!existsSync(projectPath)) {
+		return null;
+	}
+
+	// Validate and clamp threshold
+	if (typeof threshold !== "number" || isNaN(threshold)) {
+		threshold = 0.6;
+	}
+	threshold = Math.max(0, Math.min(1, threshold));
+
+	// Normalize title to slug (same as generateFilename)
+	const inputSlug = slugifyProjectName(title).substring(0, 50);
+	const inputWords = extractSignificantWords(inputSlug);
+
+	const categoryPath = join(projectPath, category);
+	const files = scanCategoryForNotes(categoryPath, category, logger);
+
+	// If less than 2 significant words, fall back to exact slug matching
+	if (inputWords.length < 2) {
+		for (const file of files) {
+			const fileSlug = file.replace(/\.md$/, "");
+			if (fileSlug === inputSlug) {
+				return {
+					path: join(categoryPath, file),
+					category,
+					score: 1.0
+				};
+			}
+		}
+		return null;
+	}
+
+	// Find best match within the category
+	let bestMatch: SimilarTopicMatch | null = null;
+	let bestScore = 0;
+
+	for (const file of files) {
+		const fileSlug = file.replace(/\.md$/, "");
+		const fileWords = extractSignificantWords(fileSlug);
+		const score = computeJaccardSimilarity(inputWords, fileWords);
+
+		if (score >= threshold) {
+			// Deterministic tie-breaking: higher score wins, alphabetical filename as tiebreaker
+			if (score > bestScore || (score === bestScore && (!bestMatch || file < basename(bestMatch.path)))) {
+				bestScore = score;
+				bestMatch = {
+					path: join(categoryPath, file),
+					category,
+					score
+				};
+			}
+		}
+	}
+
+	logger.debug("Found similar topic in category", {
+		input: title,
+		category,
+		match: bestMatch ? { path: bestMatch.path, score: bestMatch.score } : null
+	});
+
+	return bestMatch;
 }

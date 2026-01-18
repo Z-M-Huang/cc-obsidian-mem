@@ -20,9 +20,12 @@ import {
 	getProjectPath,
 	getMemFolderPath,
 	findExistingTopicNote,
+	findSimilarTopicAcrossCategories,
+	findSimilarTopicInCategory,
 	appendToExistingNote,
 	ensureProjectStructure,
 	slugifyProjectName,
+	type SimilarTopicMatch,
 } from "../vault/vault-manager.js";
 import {
 	generateAllCanvases,
@@ -55,7 +58,7 @@ async function main() {
 
 	const server = new McpServer({
 		name: "obsidian-mem",
-		version: "1.0.1",
+		version: "1.0.2",
 	});
 
 	// ========================================================================
@@ -209,15 +212,50 @@ async function main() {
 				const projectSlug = ensureProjectStructure(projectName);
 				const projectPath = getProjectPath(projectSlug);
 
-				// Check for existing note with same topic (deduplication)
-				const existingNotePath = findExistingTopicNote(projectPath, folder, title);
+				// Check for existing note with similar topic (cross-category deduplication)
+				let existingNote: SimilarTopicMatch | null = null;
+				if (config.deduplication?.enabled !== false) {
+					existingNote = findSimilarTopicAcrossCategories(
+						projectPath,
+						title,
+						config.deduplication?.threshold
+					);
+				} else {
+					// Fallback to exact matching within category
+					const exactMatch = findExistingTopicNote(projectPath, folder, title);
+					if (exactMatch) {
+						existingNote = { path: exactMatch, category: folder, score: 1.0 };
+					}
+				}
 
-				if (existingNotePath) {
-					// Append to existing note
-					const success = appendToExistingNote(existingNotePath, content, tags || []);
+				// Determine target note for appending
+				let targetNote: SimilarTopicMatch | null = null;
+				if (existingNote && existingNote.category === folder) {
+					// Same-category match - use it
+					targetNote = existingNote;
+				} else if (existingNote && existingNote.category !== folder) {
+					// Cross-category match - try same-category similarity fallback to avoid missing valid matches
+					const sameCategoryMatch = findSimilarTopicInCategory(
+						projectPath,
+						folder,
+						title,
+						config.deduplication?.threshold
+					);
+					if (sameCategoryMatch) {
+						targetNote = sameCategoryMatch;
+					}
+				}
+
+				if (targetNote) {
+					// Append to existing note (same category only)
+					const success = appendToExistingNote(targetNote.path, content, tags || []);
 					if (success) {
+						const scorePercent = (targetNote.score * 100).toFixed(0);
 						return {
-							content: [{ type: "text", text: `Appended to existing note: ${existingNotePath}` }],
+							content: [{
+								type: "text",
+								text: `Appended to existing note: ${targetNote.path} (${scorePercent}% match in ${targetNote.category})`
+							}],
 						};
 					} else {
 						return {
@@ -330,15 +368,50 @@ async function main() {
 					fullContent += keyPoints.map((p) => `- ${p}`).join("\n");
 				}
 
-				// Check for existing note with same topic (deduplication)
-				const existingNotePath = findExistingTopicNote(projectPath, folder, title);
+				// Check for existing note with similar topic (cross-category deduplication)
+				let existingNote: SimilarTopicMatch | null = null;
+				if (config.deduplication?.enabled !== false) {
+					existingNote = findSimilarTopicAcrossCategories(
+						projectPath,
+						title,
+						config.deduplication?.threshold
+					);
+				} else {
+					// Fallback to exact matching within category
+					const exactMatch = findExistingTopicNote(projectPath, folder, title);
+					if (exactMatch) {
+						existingNote = { path: exactMatch, category: folder, score: 1.0 };
+					}
+				}
 
-				if (existingNotePath) {
-					// Append to existing note
-					const success = appendToExistingNote(existingNotePath, fullContent, topics || []);
+				// Determine target note for appending
+				let targetNote: SimilarTopicMatch | null = null;
+				if (existingNote && existingNote.category === folder) {
+					// Same-category match - use it
+					targetNote = existingNote;
+				} else if (existingNote && existingNote.category !== folder) {
+					// Cross-category match - try same-category similarity fallback to avoid missing valid matches
+					const sameCategoryMatch = findSimilarTopicInCategory(
+						projectPath,
+						folder,
+						title,
+						config.deduplication?.threshold
+					);
+					if (sameCategoryMatch) {
+						targetNote = sameCategoryMatch;
+					}
+				}
+
+				if (targetNote) {
+					// Append to existing note (same category only)
+					const success = appendToExistingNote(targetNote.path, fullContent, topics || []);
 					if (success) {
+						const scorePercent = (targetNote.score * 100).toFixed(0);
 						return {
-							content: [{ type: "text", text: `Appended to existing knowledge note: ${existingNotePath}` }],
+							content: [{
+								type: "text",
+								text: `Appended to existing knowledge note: ${targetNote.path} (${scorePercent}% match in ${targetNote.category})`
+							}],
 						};
 					} else {
 						return {
@@ -729,7 +802,7 @@ async function main() {
 				// Security: Prevent operations on category index files
 				const filename = basename(validatedPath);
 				const filenameWithoutExt = filename.replace(/\.md$/, "");
-				const isIndexFile = ["decisions", "patterns", "errors", "research", "knowledge", "sessions"].includes(filenameWithoutExt);
+				const isIndexFile = ["decisions", "patterns", "errors", "research", "knowledge", "sessions", "files"].includes(filenameWithoutExt);
 
 				if (isIndexFile && filename.endsWith(".md")) {
 					logger.warn("mem_file_ops: blocked operation on category index file", { path: targetPath });
@@ -777,7 +850,7 @@ async function main() {
 						// Security: Prevent moving TO a category index file path
 						const destFilename = basename(validatedDest);
 						const destFilenameWithoutExt = destFilename.replace(/\.md$/, "");
-						const isDestIndexFile = ["decisions", "patterns", "errors", "research", "knowledge", "sessions"].includes(destFilenameWithoutExt);
+						const isDestIndexFile = ["decisions", "patterns", "errors", "research", "knowledge", "sessions", "files"].includes(destFilenameWithoutExt);
 
 						if (isDestIndexFile && destFilename.endsWith(".md")) {
 							logger.warn("mem_file_ops: blocked move to category index file path", { destination });

@@ -37,6 +37,11 @@ export interface StylingResult {
 	reason?: string;
 }
 
+export interface DeduplicationConfig {
+	enabled?: boolean;
+	threshold?: number;
+}
+
 export interface Config {
 	vault: {
 		path: string;
@@ -62,6 +67,7 @@ export interface Config {
 	};
 	styling?: StylingConfig;
 	processing?: ProcessingConfig;
+	deduplication?: DeduplicationConfig;
 	defaultProject?: string;
 }
 
@@ -419,5 +425,6 @@ export interface NoteFrontmatter {
 	superseded_by?: string;
 	supersedes?: string[];
 	parent?: string;
+	entry_count?: number;
 	[key: string]: unknown;
 }

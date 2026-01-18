@@ -113,6 +113,10 @@ The wizard will prompt you for your Obsidian vault path and create the config fi
   "processing": {
     "frequency": "compact-only",
     "periodicInterval": 10
+  },
+  "deduplication": {
+    "enabled": true,
+    "threshold": 0.6
   }
 }
 ```
@@ -386,7 +390,28 @@ Knowledge notes use **topic-based filenames** instead of date-prefixed filenames
 - Notes are named `authentication-bug.md` instead of `2026-01-15_authentication-bug.md`
 - When new knowledge matches an existing topic, it's **appended** to the existing note
 - Each entry within a note has a timestamp header (`## Entry: YYYY-MM-DD HH:MM`)
-- Matching uses exact slug comparison within the same category (case-insensitive)
+
+**Deduplication Algorithm** (v1.0.2+):
+
+- Uses **Jaccard word similarity** to match topics with similar (not just identical) titles
+- Searches **across all categories** to find similar topics, but only appends to **same-category** matches
+- Default threshold: 60% similarity (configurable)
+- Stopwords (common words like "the", "for", "in") are filtered before comparison
+- Falls back to exact slug matching for single-word titles
+
+**Configuration** (add to `~/.cc-obsidian-mem/config.json`):
+
+```json
+"deduplication": {
+  "enabled": true,
+  "threshold": 0.6
+}
+```
+
+| Option      | Values        | Description                                    |
+| ----------- | ------------- | ---------------------------------------------- |
+| `enabled`   | `true`/`false`| Enable cross-category deduplication (default: `true`) |
+| `threshold` | 0.0 - 1.0     | Similarity threshold (default: `0.6` = 60%)    |
 
 **Migration for existing vaults**: Existing date-prefixed notes continue to work. New knowledge will use topic-based filenames. You can manually merge duplicate notes if desired.
 

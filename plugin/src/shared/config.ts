@@ -46,6 +46,10 @@ const DEFAULT_CONFIG: Config = {
 		pidValidationTimeoutMs: 500,
 		spawnVerifyDelayMs: 100,
 	},
+	deduplication: {
+		enabled: true,
+		threshold: 0.6,
+	},
 };
 
 /**
@@ -72,6 +76,16 @@ export function loadConfig(): Config {
  * Deep merge user config with defaults
  */
 function mergeConfig(defaults: Config, user: Partial<Config>): Config {
+	// Validate and clamp deduplication threshold
+	let deduplication = { ...defaults.deduplication, ...user.deduplication };
+	if (deduplication.threshold !== undefined) {
+		if (typeof deduplication.threshold !== "number" || isNaN(deduplication.threshold)) {
+			deduplication.threshold = 0.6;
+		} else {
+			deduplication.threshold = Math.max(0, Math.min(1, deduplication.threshold));
+		}
+	}
+
 	return {
 		vault: { ...defaults.vault, ...user.vault },
 		sqlite: {
@@ -86,6 +100,7 @@ function mergeConfig(defaults: Config, user: Partial<Config>): Config {
 		canvas: { ...defaults.canvas, ...user.canvas },
 		styling: { ...defaults.styling, ...user.styling },
 		processing: { ...defaults.processing!, ...user.processing },
+		deduplication,
 		defaultProject: user.defaultProject ?? defaults.defaultProject,
 	};
 }

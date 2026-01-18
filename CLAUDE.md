@@ -65,10 +65,10 @@ When releasing a new version, update the version number in **all four files**:
 
 | File                                | Field                | Example              |
 | ----------------------------------- | -------------------- | -------------------- |
-| `plugin/package.json`               | `version`            | `"version": "1.0.1"` |
-| `plugin/.claude-plugin/plugin.json` | `version`            | `"version": "1.0.1"` |
-| `.claude-plugin/marketplace.json`   | `plugins[0].version` | `"version": "1.0.1"` |
-| `plugin/src/mcp-server/index.ts`    | `version`            | `version: "1.0.1"`   |
+| `plugin/package.json`               | `version`            | `"version": "1.0.2"` |
+| `plugin/.claude-plugin/plugin.json` | `version`            | `"version": "1.0.2"` |
+| `.claude-plugin/marketplace.json`   | `plugins[0].version` | `"version": "1.0.2"` |
+| `plugin/src/mcp-server/index.ts`    | `version`            | `version: "1.0.2"`   |
 
 ### Project Structure
 
@@ -270,9 +270,30 @@ Individual Notes (decisions/authentication-bug.md)
 Notes use **topic-based filenames** (not date-prefixed) to enable automatic deduplication:
 
 - Filename: `authentication-bug.md` (not `2026-01-10_authentication-bug.md`)
-- When new knowledge matches an existing topic's slug, content is **appended** to the existing note
+- When new knowledge matches an existing topic, content is **appended** to the existing note
 - Each entry has a timestamp header: `## Entry: YYYY-MM-DD HH:MM`
 - Frontmatter tracks: `created` (first entry), `updated` (last entry), `entry_count`
-- Matching: exact slug comparison within the same category (case-insensitive)
+
+**Deduplication Algorithm**:
+
+- Uses **Jaccard word similarity** to match topics with similar (not just identical) titles
+- Searches **across all categories** to find similar topics, but only appends to **same-category** matches
+- Default threshold: 60% similarity (configurable)
+- Stopwords (common words like "the", "for", "in") are filtered before comparison
+- Falls back to exact slug matching for single-word titles
+
+**Deduplication Configuration** (add to `~/.cc-obsidian-mem/config.json`):
+
+```json
+"deduplication": {
+  "enabled": true,
+  "threshold": 0.6
+}
+```
+
+| Option      | Values        | Description                                    |
+| ----------- | ------------- | ---------------------------------------------- |
+| `enabled`   | `true`/`false`| Enable cross-category deduplication (default: `true`) |
+| `threshold` | 0.0 - 1.0     | Similarity threshold (default: `0.6` = 60%)    |
 
 **Migration**: Existing date-prefixed notes continue to work. New knowledge will use topic-based filenames.
