@@ -8,6 +8,7 @@ import { join, basename } from "path";
 import { getProjectPath } from "./vault-manager.js";
 import { loadConfig } from "../shared/config.js";
 import { createLogger } from "../shared/logger.js";
+import { DEFAULT_COLORS } from "./styling.js";
 
 interface CanvasNode {
 	id: string;
@@ -17,6 +18,7 @@ interface CanvasNode {
 	y: number;
 	width: number;
 	height: number;
+	color?: string;
 }
 
 interface CanvasEdge {
@@ -30,6 +32,15 @@ interface CanvasEdge {
 interface Canvas {
 	nodes: CanvasNode[];
 	edges: CanvasEdge[];
+}
+
+/**
+ * Get canvas color preset for a category from shared DEFAULT_COLORS
+ * Returns undefined if category not found or if coloring is disabled
+ */
+function getCategoryCanvasColor(category: string, enabled: boolean): string | undefined {
+	if (!enabled) return undefined;
+	return DEFAULT_COLORS[category]?.canvas_preset;
 }
 
 /**
@@ -53,6 +64,7 @@ export function generateDashboardCanvas(projectSlug: string): string[] {
 		const nodes: CanvasNode[] = [];
 		let x = 0;
 		const y = 0;
+		const canvasColorsEnabled = config.styling?.canvasColors !== false;
 
 		for (const category of categories) {
 			const categoryPath = join(projectPath, category);
@@ -71,6 +83,7 @@ export function generateDashboardCanvas(projectSlug: string): string[] {
 					y: y + index * 200,
 					width: 400,
 					height: 150,
+					color: getCategoryCanvasColor(category, canvasColorsEnabled),
 				});
 			});
 
@@ -165,6 +178,7 @@ export function generateGraphCanvas(projectSlug: string): string[] {
 
 		const categories = ["decisions", "patterns", "errors"];
 		const radius = 600;
+		const canvasColorsEnabled = config.styling?.canvasColors !== false;
 
 		categories.forEach((category, catIndex) => {
 			const categoryPath = join(projectPath, category);
@@ -193,6 +207,7 @@ export function generateGraphCanvas(projectSlug: string): string[] {
 					y: y,
 					width: 300,
 					height: 120,
+					color: getCategoryCanvasColor(category, canvasColorsEnabled),
 				});
 			});
 		});

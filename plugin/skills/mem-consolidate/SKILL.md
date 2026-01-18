@@ -1,7 +1,7 @@
 ---
 name: mem-consolidate
 description: Interactively consolidate duplicate knowledge notes
-version: 1.0.0
+version: 1.0.1
 allowed-tools:
   - mcp__obsidian-mem__mem_search
   - mcp__obsidian-mem__mem_read

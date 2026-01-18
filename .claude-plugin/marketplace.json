@@ -10,7 +10,7 @@
   "plugins": [
     {
       "name": "cc-obsidian-mem",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "source": "./plugin",
       "description": "Automatically captures session activity, errors, decisions, and patterns into a browsable, visualizable knowledge base."
     }

@@ -1,7 +1,7 @@
 ---
 name: mem-save
 description: Explicitly save knowledge, patterns, decisions, or learnings to the knowledge base. Use when you want to document something for future reference.
-version: 1.0.0
+version: 1.0.1
 allowed-tools:
   - mcp__obsidian-mem__mem_write
   - mcp__obsidian-mem__mem_read

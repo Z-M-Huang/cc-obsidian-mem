@@ -1,7 +1,7 @@
 ---
 name: mem-status
 description: Show memory system status and tracked projects. Use to check memory system health and list projects.
-version: 1.0.0
+version: 1.0.1
 allowed-tools:
   - mcp__obsidian-mem__mem_project_context
   - mcp__obsidian-mem__mem_list_projects

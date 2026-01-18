@@ -1,7 +1,7 @@
 ---
 name: mem-validate
 description: AI-powered validation of knowledge notes against current codebase. Detects stale content by comparing documented knowledge with actual files.
-version: 1.0.0
+version: 1.0.1
 allowed-tools:
   - mcp__obsidian-mem__mem_validate
   - mcp__obsidian-mem__mem_read

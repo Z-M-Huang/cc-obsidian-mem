@@ -35,6 +35,12 @@ const DEFAULT_CONFIG: Config = {
 		autoGenerate: false,
 		updateStrategy: "skip",
 	},
+	styling: {
+		enabled: true,
+		graphColors: true,
+		cssSnippet: true,
+		canvasColors: true,
+	},
 	processing: {
 		stalenessTimeoutMinutes: 30,
 		pidValidationTimeoutMs: 500,
@@ -78,6 +84,7 @@ function mergeConfig(defaults: Config, user: Partial<Config>): Config {
 		},
 		logging: { ...defaults.logging, ...user.logging },
 		canvas: { ...defaults.canvas, ...user.canvas },
+		styling: { ...defaults.styling, ...user.styling },
 		processing: { ...defaults.processing!, ...user.processing },
 		defaultProject: user.defaultProject ?? defaults.defaultProject,
 	};

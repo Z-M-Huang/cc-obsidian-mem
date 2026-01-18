@@ -30,6 +30,7 @@ import {
 	generateTimelineCanvas,
 	generateGraphCanvas,
 } from "../vault/canvas.js";
+import { applyStyling } from "../vault/styling.js";
 import {
 	buildFrontmatter,
 	generateFilename,
@@ -54,7 +55,7 @@ async function main() {
 
 	const server = new McpServer({
 		name: "obsidian-mem",
-		version: "1.0.0",
+		version: "1.0.1",
 	});
 
 	// ========================================================================
@@ -537,6 +538,30 @@ async function main() {
 					output += "No knowledge found for this project yet.\n";
 				}
 
+
+			// Apply styling if enabled
+			if (config.styling?.enabled !== false) {
+				const vaultPath = config.vault.path;
+				const memFolder = config.vault.memFolder || "_claude-mem";
+				const stylingResult = applyStyling(vaultPath, project, memFolder, config.styling || {});
+
+				logger.debug("Styling applied", { result: stylingResult });
+
+				if (stylingResult.success) {
+					const stylingMessages = [];
+					if (stylingResult.cssCreated) {
+						stylingMessages.push("CSS snippet created");
+					}
+					if (stylingResult.graphUpdated) {
+						stylingMessages.push("Graph colors updated");
+					}
+					if (stylingMessages.length > 0) {
+						output += `\n_Styling: ${stylingMessages.join(", ")}_\n`;
+					}
+				} else if (stylingResult.error) {
+					logger.warn("Styling partially failed", { error: stylingResult.error });
+				}
+			}
 				return {
 					content: [{ type: "text", text: output }],
 				};

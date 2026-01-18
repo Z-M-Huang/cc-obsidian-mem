@@ -1,7 +1,7 @@
 ---
 name: mem-audit
 description: Scan the knowledge base for structural issues like broken links, orphan notes, missing indexes, and optionally AI-powered content staleness detection.
-version: 1.0.0
+version: 1.0.1
 allowed-tools:
   - mcp__obsidian-mem__mem_audit
   - mcp__obsidian-mem__mem_list_projects

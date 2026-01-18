@@ -1,7 +1,7 @@
 ---
 name: mem-search
 description: Search the Claude Code knowledge base for errors, solutions, decisions, and patterns. Use this to find information from your memory system.
-version: 1.0.0
+version: 1.0.1
 allowed-tools:
   - mcp__obsidian-mem__mem_search
   - mcp__obsidian-mem__mem_read

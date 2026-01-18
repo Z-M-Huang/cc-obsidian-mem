@@ -13,6 +13,30 @@ export interface ProcessingConfig {
 	spawnVerifyDelayMs: number;
 }
 
+export interface StylingConfig {
+	enabled?: boolean;
+	graphColors?: boolean;
+	cssSnippet?: boolean;
+	canvasColors?: boolean;
+	colors?: Partial<ColorMap>;
+}
+
+export interface ColorInfo {
+	hex: string;
+	rgb_int: number;
+	canvas_preset: string;
+}
+
+export type ColorMap = Record<string, ColorInfo>;
+
+export interface StylingResult {
+	success: boolean;
+	cssCreated?: boolean;
+	graphUpdated?: boolean;
+	error?: string;
+	reason?: string;
+}
+
 export interface Config {
 	vault: {
 		path: string;
@@ -36,6 +60,7 @@ export interface Config {
 		autoGenerate?: boolean;
 		updateStrategy?: "always" | "skip";
 	};
+	styling?: StylingConfig;
 	processing?: ProcessingConfig;
 	defaultProject?: string;
 }
