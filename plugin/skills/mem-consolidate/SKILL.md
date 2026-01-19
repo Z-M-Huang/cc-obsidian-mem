@@ -1,7 +1,7 @@
 ---
 name: mem-consolidate
 description: Two-phase cleanup - normalize long filenames, then consolidate semantic duplicates using AI
-version: 1.0.2
+version: 1.0.3
 allowed-tools:
   - mcp__obsidian-mem__mem_search
   - mcp__obsidian-mem__mem_read

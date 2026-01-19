@@ -188,29 +188,45 @@ function matchNote(
 			}
 		}
 
-		// Calculate match score
+		// Early return for empty query
+		if (!query || query.trim().length === 0) {
+			return null;
+		}
+
+		// Calculate match score using Jaccard similarity for title
 		let score = 0;
 		const contentLower = content.toLowerCase();
 		const titleLower = (parsed.frontmatter.title || "").toLowerCase();
+		const queryLower = query.toLowerCase();
 
-		// Title match is worth more
-		if (titleLower.includes(query)) {
-			score += 10;
-		}
+		// Tokenize query and title for Jaccard similarity
+		// Convert spaces to hyphens to work with extractSignificantWords (designed for slugs)
+		const queryWords = extractSignificantWords(queryLower.replace(/\s+/g, "-"));
+		const titleWords = extractSignificantWords(titleLower.replace(/\s+/g, "-"));
 
-		// Content match
-		const contentMatches = (contentLower.match(new RegExp(query, "g")) || [])
-			.length;
-		score += contentMatches;
+		// Jaccard similarity for title (0-1 scale, multiply by 15 for weight)
+		// Handles word reordering (e.g., "session hook" matches "hook session")
+		const jaccardScore = computeJaccardSimilarity(queryWords, titleWords) * 15;
 
-		if (score === 0) {
+		// Exact substring match bonus
+		// Handles partial words (e.g., "config" matches "configuration")
+		const exactTitleMatch = titleLower.includes(queryLower) ? 5 : 0;
+
+		// Content substring matches (escape regex special chars)
+		const escapedQuery = queryLower.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+		const contentMatches = (contentLower.match(new RegExp(escapedQuery, "g")) || []).length;
+
+		score = jaccardScore + exactTitleMatch + contentMatches;
+
+		// Lower threshold to catch Jaccard partial matches
+		if (score < 1) {
 			return null;
 		}
 
 		// Extract snippet around first match
-		const matchIndex = contentLower.indexOf(query);
+		const matchIndex = contentLower.indexOf(queryLower);
 		const snippetStart = Math.max(0, matchIndex - 50);
-		const snippetEnd = Math.min(content.length, matchIndex + query.length + 50);
+		const snippetEnd = Math.min(content.length, matchIndex + queryLower.length + 50);
 		const snippet = content.substring(snippetStart, snippetEnd).replace(/\n/g, " ");
 
 		return {

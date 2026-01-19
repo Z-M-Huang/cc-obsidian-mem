@@ -37,7 +37,7 @@ Obsidian-based persistent memory system for Claude Code. Automatically captures 
 - [Bun](https://bun.sh/) runtime installed
 - [Obsidian](https://obsidian.md/) with an existing vault
 - [Dataview plugin](https://github.com/blacksmithgu/obsidian-dataview) (recommended for dashboards)
-- Claude Code CLI **v1.0.29 or later** (required for `--no-session-persistence` flag)
+- Claude Code CLI **v1.0.39 or later** (required for `--no-session-persistence` flag)
   - Check your version: `claude --version`
   - Upgrade if needed: `npm install -g @anthropic-ai/claude-code`
 
@@ -372,7 +372,7 @@ Then view: `tail -f /tmp/cc-obsidian-mem-*.log`
 
 If Claude's `--continue` command picks up an agent session instead of your actual conversation, this is caused by polluted session files from cc-obsidian-mem's background processes.
 
-**This was fixed in v1.0.2+** by using the `--no-session-persistence` flag. The cleanup below is only needed for sessions created with older versions.
+**This was fixed in v1.0.3+** by using the `--no-session-persistence` flag. The cleanup below is only needed for sessions created with older versions.
 
 **Option 1: Delete all session history (simplest)**
 
@@ -444,7 +444,7 @@ Knowledge notes use **topic-based filenames** instead of date-prefixed filenames
 - When new knowledge matches an existing topic, it's **appended** to the existing note
 - Each entry within a note has a timestamp header (`## Entry: YYYY-MM-DD HH:MM`)
 
-**Deduplication Algorithm** (v1.0.2+):
+**Deduplication Algorithm** (v1.0.3+):
 
 - Uses **Jaccard word similarity** to match topics with similar (not just identical) titles
 - Searches **across all categories** to find similar topics, but only appends to **same-category** matches
