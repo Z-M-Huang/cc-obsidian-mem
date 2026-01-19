@@ -1,7 +1,7 @@
 ---
 name: mem-repair
 description: Repair common issues with the memory system. Cleans up orphan temp files, stale sessions, lock files, and old logs.
-version: 1.0.2
+version: 1.0.3
 allowed-tools:
   - Bash
   - Read

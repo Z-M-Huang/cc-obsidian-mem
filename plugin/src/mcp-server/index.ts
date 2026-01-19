@@ -116,7 +116,7 @@ async function main() {
 
 	const server = new McpServer({
 		name: "obsidian-mem",
-		version: "1.0.2",
+		version: "1.0.3",
 	});
 
 	// ========================================================================
