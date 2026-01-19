@@ -1,7 +1,7 @@
 ---
 name: mem-fix
 description: Fix issues detected by mem-audit. Supports dry-run mode to preview changes before applying them.
-version: 1.0.1
+version: 1.0.2
 allowed-tools:
   - mcp__obsidian-mem__mem_audit
   - mcp__obsidian-mem__mem_fix

@@ -20,10 +20,20 @@ import {
 	getProjectPath,
 	getMemFolderPath,
 	findExistingTopicNote,
+	findSimilarTopicAcrossCategories,
+	findSimilarTopicInCategory,
 	appendToExistingNote,
 	ensureProjectStructure,
 	slugifyProjectName,
+	addAliasToNote,
+	renameNoteWithGenericTitle,
+	CATEGORIES,
+	type SimilarTopicMatch,
 } from "../vault/vault-manager.js";
+import {
+	findSemanticMatch,
+	type NoteInfo,
+} from "../vault/ai-matcher.js";
 import {
 	generateAllCanvases,
 	generateDashboardCanvas,
@@ -37,12 +47,63 @@ import {
 	getParentLink,
 	noteTypeToFolder,
 } from "../vault/note-builder.js";
-import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync, renameSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync, renameSync, readdirSync, statSync } from "fs";
 import { join, dirname, basename } from "path";
 import type { NoteType } from "../shared/types.js";
+import { MAX_AI_CANDIDATES } from "../shared/types.js";
 
 type TextContent = { type: "text"; text: string };
 type ToolResult = { content: TextContent[]; isError?: boolean };
+
+/**
+ * Collect notes from a project for AI matching
+ * Scans all category folders and collects up to MAX_AI_CANDIDATES notes
+ */
+function collectNotesForAI(projectPath: string): NoteInfo[] {
+	const notes: NoteInfo[] = [];
+
+	for (const category of CATEGORIES) {
+		const categoryPath = join(projectPath, category);
+		if (!existsSync(categoryPath)) {
+			continue;
+		}
+
+		try {
+			const files = readdirSync(categoryPath);
+			const categoryIndexFile = `${category}.md`;
+
+			for (const file of files) {
+				if (!file.endsWith(".md") || file === categoryIndexFile) {
+					continue;
+				}
+
+				const filePath = join(categoryPath, file);
+				const stat = statSync(filePath);
+				if (!stat.isFile()) {
+					continue;
+				}
+
+				// Extract title from filename (remove .md extension)
+				const title = file.replace(/\.md$/, "").replace(/-/g, " ");
+
+				notes.push({
+					path: filePath,
+					title,
+					category,
+				});
+
+				// Limit to MAX_AI_CANDIDATES
+				if (notes.length >= MAX_AI_CANDIDATES) {
+					return notes;
+				}
+			}
+		} catch {
+			// Skip directories we can't read
+		}
+	}
+
+	return notes;
+}
 
 async function main() {
 	const config = loadConfig();
@@ -55,7 +116,7 @@ async function main() {
 
 	const server = new McpServer({
 		name: "obsidian-mem",
-		version: "1.0.1",
+		version: "1.0.2",
 	});
 
 	// ========================================================================
@@ -209,21 +270,99 @@ async function main() {
 				const projectSlug = ensureProjectStructure(projectName);
 				const projectPath = getProjectPath(projectSlug);
 
-				// Check for existing note with same topic (deduplication)
-				const existingNotePath = findExistingTopicNote(projectPath, folder, title);
+				// Check for existing note with similar topic (cross-category deduplication)
+				let existingNote: SimilarTopicMatch | null = null;
+				if (config.deduplication?.enabled !== false) {
+					existingNote = findSimilarTopicAcrossCategories(
+						projectPath,
+						title,
+						config.deduplication?.threshold
+					);
+				} else {
+					// Fallback to exact matching within category
+					const exactMatch = findExistingTopicNote(projectPath, folder, title);
+					if (exactMatch) {
+						existingNote = { path: exactMatch, category: folder, score: 1.0 };
+					}
+				}
 
-				if (existingNotePath) {
-					// Append to existing note
-					const success = appendToExistingNote(existingNotePath, content, tags || []);
+				// Determine target note for appending
+				let targetNote: SimilarTopicMatch | null = null;
+				if (existingNote && existingNote.category === folder) {
+					// Same-category match - use it
+					targetNote = existingNote;
+				} else if (existingNote && existingNote.category !== folder) {
+					// Cross-category match - try same-category similarity fallback to avoid missing valid matches
+					const sameCategoryMatch = findSimilarTopicInCategory(
+						projectPath,
+						folder,
+						title,
+						config.deduplication?.threshold
+					);
+					if (sameCategoryMatch) {
+						targetNote = sameCategoryMatch;
+					}
+				}
+
+				if (targetNote) {
+					// Append to existing note (same category only)
+					const success = appendToExistingNote(targetNote.path, content, tags || []);
 					if (success) {
+						const scorePercent = (targetNote.score * 100).toFixed(0);
 						return {
-							content: [{ type: "text", text: `Appended to existing note: ${existingNotePath}` }],
+							content: [{
+								type: "text",
+								text: `Appended to existing note: ${targetNote.path} (${scorePercent}% match in ${targetNote.category})`
+							}],
 						};
 					} else {
 						return {
 							content: [{ type: "text", text: "Failed to append to existing note" }],
 							isError: true,
 						};
+					}
+				}
+
+				// AI Fallback: If Jaccard didn't find a match and AI is enabled, try semantic matching
+				if (config.ai?.enabled) {
+					const existingNotes = collectNotesForAI(projectPath);
+					if (existingNotes.length > 0) {
+						const aiMatch = findSemanticMatch(title, existingNotes, config);
+
+						if (aiMatch && (aiMatch.confidence === "high" || aiMatch.confidence === "medium")) {
+							logger.debug("AI found semantic match", {
+								title,
+								matchedPath: aiMatch.path,
+								confidence: aiMatch.confidence,
+								genericTitle: aiMatch.genericTitle
+							});
+
+							// Append content to matched note
+							const appendSuccess = appendToExistingNote(aiMatch.path, content, tags || []);
+							if (!appendSuccess) {
+								logger.warn("AI match found but append failed", { path: aiMatch.path });
+								// Fall through to create new note
+							} else {
+								// Add original title as alias for future Jaccard matching
+								addAliasToNote(aiMatch.path, title);
+
+								// Rename to generic title if AI suggested one
+								let finalPath = aiMatch.path;
+								if (aiMatch.genericTitle && aiMatch.genericTitle !== aiMatch.title) {
+									const renamedPath = renameNoteWithGenericTitle(aiMatch.path, aiMatch.genericTitle);
+									if (renamedPath) {
+										finalPath = renamedPath;
+									}
+								}
+
+								return {
+									content: [{
+										type: "text",
+										text: `Appended to existing note (AI ${aiMatch.confidence} confidence): ${finalPath}`
+									}],
+								};
+							}
+						}
 					}
 				}
 
@@ -330,21 +469,99 @@ async function main() {
 					fullContent += keyPoints.map((p) => `- ${p}`).join("\n");
 				}
 
-				// Check for existing note with same topic (deduplication)
-				const existingNotePath = findExistingTopicNote(projectPath, folder, title);
+				// Check for existing note with similar topic (cross-category deduplication)
+				let existingNote: SimilarTopicMatch | null = null;
+				if (config.deduplication?.enabled !== false) {
+					existingNote = findSimilarTopicAcrossCategories(
+						projectPath,
+						title,
+						config.deduplication?.threshold
+					);
+				} else {
+					// Fallback to exact matching within category
+					const exactMatch = findExistingTopicNote(projectPath, folder, title);
+					if (exactMatch) {
+						existingNote = { path: exactMatch, category: folder, score: 1.0 };
+					}
+				}
 
-				if (existingNotePath) {
-					// Append to existing note
-					const success = appendToExistingNote(existingNotePath, fullContent, topics || []);
+				// Determine target note for appending
+				let targetNote: SimilarTopicMatch | null = null;
+				if (existingNote && existingNote.category === folder) {
+					// Same-category match - use it
+					targetNote = existingNote;
+				} else if (existingNote && existingNote.category !== folder) {
+					// Cross-category match - try same-category similarity fallback to avoid missing valid matches
+					const sameCategoryMatch = findSimilarTopicInCategory(
+						projectPath,
+						folder,
+						title,
+						config.deduplication?.threshold
+					);
+					if (sameCategoryMatch) {
+						targetNote = sameCategoryMatch;
+					}
+				}
+
+				if (targetNote) {
+					// Append to existing note (same category only)
+					const success = appendToExistingNote(targetNote.path, fullContent, topics || []);
 					if (success) {
+						const scorePercent = (targetNote.score * 100).toFixed(0);
 						return {
-							content: [{ type: "text", text: `Appended to existing knowledge note: ${existingNotePath}` }],
+							content: [{
+								type: "text",
+								text: `Appended to existing knowledge note: ${targetNote.path} (${scorePercent}% match in ${targetNote.category})`
+							}],
 						};
 					} else {
 						return {
 							content: [{ type: "text", text: "Failed to append to existing knowledge note" }],
 							isError: true,
 						};
+					}
+				}
+
+				// AI Fallback: If Jaccard didn't find a match and AI is enabled, try semantic matching
+				if (config.ai?.enabled) {
+					const existingNotes = collectNotesForAI(projectPath);
+					if (existingNotes.length > 0) {
+						const aiMatch = findSemanticMatch(title, existingNotes, config);
+
+						if (aiMatch && (aiMatch.confidence === "high" || aiMatch.confidence === "medium")) {
+							logger.debug("AI found semantic match for knowledge", {
+								title,
+								matchedPath: aiMatch.path,
+								confidence: aiMatch.confidence,
+								genericTitle: aiMatch.genericTitle
+							});
+
+							// Append content to matched note
+							const appendSuccess = appendToExistingNote(aiMatch.path, fullContent, topics || []);
+							if (!appendSuccess) {
+								logger.warn("AI match found but append failed", { path: aiMatch.path });
+								// Fall through to create new note
+							} else {
+								// Add original title as alias for future Jaccard matching
+								addAliasToNote(aiMatch.path, title);
+
+								// Rename to generic title if AI suggested one
+								let finalPath = aiMatch.path;
+								if (aiMatch.genericTitle && aiMatch.genericTitle !== aiMatch.title) {
+									const renamedPath = renameNoteWithGenericTitle(aiMatch.path, aiMatch.genericTitle);
+									if (renamedPath) {
+										finalPath = renamedPath;
+									}
+								}
+
+								return {
+									content: [{
+										type: "text",
+										text: `Appended to existing knowledge note (AI ${aiMatch.confidence} confidence): ${finalPath}`
+									}],
+								};
+							}
+						}
 					}
 				}
 
@@ -729,7 +946,7 @@ async function main() {
 				// Security: Prevent operations on category index files
 				const filename = basename(validatedPath);
 				const filenameWithoutExt = filename.replace(/\.md$/, "");
-				const isIndexFile = ["decisions", "patterns", "errors", "research", "knowledge", "sessions"].includes(filenameWithoutExt);
+				const isIndexFile = ["decisions", "patterns", "errors", "research", "knowledge", "sessions", "files"].includes(filenameWithoutExt);
 
 				if (isIndexFile && filename.endsWith(".md")) {
 					logger.warn("mem_file_ops: blocked operation on category index file", { path: targetPath });
@@ -777,7 +994,7 @@ async function main() {
 						// Security: Prevent moving TO a category index file path
 						const destFilename = basename(validatedDest);
 						const destFilenameWithoutExt = destFilename.replace(/\.md$/, "");
-						const isDestIndexFile = ["decisions", "patterns", "errors", "research", "knowledge", "sessions"].includes(destFilenameWithoutExt);
+						const isDestIndexFile = ["decisions", "patterns", "errors", "research", "knowledge", "sessions", "files"].includes(destFilenameWithoutExt);
 
 						if (isDestIndexFile && destFilename.endsWith(".md")) {
 							logger.warn("mem_file_ops: blocked move to category index file path", { destination });

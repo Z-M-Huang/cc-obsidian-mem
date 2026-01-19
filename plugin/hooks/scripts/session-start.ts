@@ -3,29 +3,17 @@
 /**
  * SessionStart Hook
  *
- * Initializes session, cleans up orphans, and injects context
+ * Initializes session tracking in the database.
+ * Cleanup operations have been moved to /mem-repair skill.
  */
 
 import { loadConfig, isAgentSession } from "../../src/shared/config.js";
 import { createLogger } from "../../src/shared/logger.js";
 import { initDatabase, closeDatabase } from "../../src/sqlite/database.js";
-import {
-	createSession,
-	getOrphanSessions,
-	updateSessionStatus,
-	cleanupOldSessions,
-	cleanupStaleProcessingSessions,
-} from "../../src/sqlite/session-store.js";
-import {
-	initFallbackSession,
-	updateFallbackSessionStatus,
-} from "../../src/fallback/fallback-store.js";
+import { createSession } from "../../src/sqlite/session-store.js";
+import { initFallbackSession } from "../../src/fallback/fallback-store.js";
 import { validate, SessionStartPayloadSchema } from "../../src/shared/validation.js";
 import { detectProjectName } from "../../src/shared/project-detection.js";
-import { ensureLocksDir, cleanupStaleLocks } from "../../src/session-end/process-lock.js";
-import { existsSync, readdirSync, statSync, unlinkSync } from "fs";
-import { join } from "path";
-import { tmpdir } from "os";
 
 // Claude Code sends snake_case fields
 interface SessionStartInput {
@@ -53,50 +41,6 @@ async function readStdinJson<T>(): Promise<T> {
 	} finally {
 		reader.releaseLock();
 	}
-}
-
-/**
- * Clean up orphan temp files older than 1 hour
- */
-function cleanupOrphanTempFiles(logger: ReturnType<typeof createLogger>): void {
-	try {
-		const tempDir = tmpdir();
-		const files = readdirSync(tempDir);
-		const now = Date.now();
-		const maxAge = 60 * 60 * 1000; // 1 hour
-
-		let cleaned = 0;
-
-		for (const file of files) {
-			if (file.startsWith("cc-obsidian-mem-") && file.endsWith(".txt")) {
-				const filePath = join(tempDir, file);
-
-				try {
-					const stats = statSync(filePath);
-					if (now - stats.mtimeMs > maxAge) {
-						unlinkSync(filePath);
-						cleaned++;
-					}
-				} catch {
-					// Skip files we can't access
-				}
-			}
-		}
-
-		if (cleaned > 0) {
-			logger.info("Cleaned up orphan temp files", { count: cleaned });
-		}
-	} catch (error) {
-		logger.warn("Failed to clean up orphan temp files", { error });
-	}
-}
-
-/**
- * Output context to stdout for injection into prompt
- */
-function outputContext(context: string): void {
-	// Write to stdout in the format Claude Code expects
-	console.log(context);
 }
 
 async function main() {
@@ -143,61 +87,13 @@ async function main() {
 		try {
 			const db = initDatabase(config.sqlite.path!, logger);
 
-			// 0. Ensure locks directory exists
-			ensureLocksDir();
-
-			// 1. Clean up stale processing sessions (atomic operation)
-			const stalenessTimeoutMinutes = config.processing?.stalenessTimeoutMinutes ?? 30;
-			const staleCount = cleanupStaleProcessingSessions(db, stalenessTimeoutMinutes);
-
-			if (staleCount > 0) {
-				logger.info("Cleaned up stale processing sessions", { count: staleCount });
-			}
-
-			// 2. Clean up stale lock files
-			const staleLocks = cleanupStaleLocks(5 * 60 * 1000); // 5 minute max age for reservations
-			if (staleLocks.length > 0) {
-				logger.info("Cleaned up stale lock files", { count: staleLocks.length, sessions: staleLocks });
-			}
-
-			// 3. Clean up orphan sessions (active but older than timeout)
-			const orphanTimeoutHours = config.sqlite.retention?.orphan_timeout_hours ?? 24;
-			const orphans = getOrphanSessions(db, orphanTimeoutHours);
-
-			if (orphans.length > 0) {
-				logger.info("Found orphan sessions", { count: orphans.length });
-
-				for (const orphan of orphans) {
-					updateSessionStatus(db, orphan.session_id, "failed");
-					logger.info("Marked orphan session as failed", {
-						sessionId: orphan.session_id,
-					});
-				}
-			}
-
-			// 4. Clean up orphan temp files
-			cleanupOrphanTempFiles(logger);
-
-			// 5. Create new session
+			// Create new session
 			createSession(db, validated.sessionId, projectName);
 
 			logger.info("Session created in SQLite", {
 				sessionId: validated.sessionId,
 				project: projectName,
 			});
-
-			// 6. TODO: Query Obsidian vault for project context and inject
-			// For now, just output a simple context message
-			const contextMessage = `<!-- Memory context for ${projectName.replace(/_/g, "-")} -->
-
-Use \`mem_search\` and \`mem_read\` to access project knowledge.
-`;
-
-			outputContext(contextMessage);
-
-			// 7. Clean up old sessions based on retention
-			const retentionCount = config.sqlite.retention?.sessions ?? 50;
-			cleanupOldSessions(db, retentionCount);
 
 			closeDatabase(db, logger);
 		} catch (sqliteError) {
@@ -210,10 +106,6 @@ Use \`mem_search\` and \`mem_read\` to access project knowledge.
 				sessionId: validated.sessionId,
 				project: projectName,
 			});
-
-			// Still output context
-			const contextMessage = `<!-- Memory context for ${projectName} -->`;
-			outputContext(contextMessage);
 		}
 	} catch (error) {
 		// Log error but don't throw - hooks must never crash

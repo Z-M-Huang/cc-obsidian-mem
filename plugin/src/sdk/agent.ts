@@ -18,11 +18,11 @@ import {
 	buildContinuationPrompt,
 	buildObservationFormatInstructions,
 } from "../shared/mode-config.js";
-import { AGENT_SESSION_MARKER } from "../shared/config.js";
+import { AGENT_SESSION_MARKER, checkClaudeVersion, MIN_CLAUDE_VERSION } from "../shared/config.js";
 import { spawnSync } from "child_process";
-import { writeFileSync, unlinkSync, existsSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
+
+// Track if we've already warned about version
+let versionCheckDone = false;
 
 // ============================================================================
 // Types
@@ -251,15 +251,6 @@ function processSummaryRequest(
 // Claude Invocation
 // ============================================================================
 
-/**
- * Sanitize sessionId for safe use in file paths
- * Removes any characters that could enable path traversal
- */
-function sanitizeSessionId(sessionId: string): string {
-	// Replace any non-alphanumeric characters (except hyphen and underscore) with underscore
-	return sessionId.replace(/[^a-zA-Z0-9\-_]/g, "_");
-}
-
 interface CallClaudeOptions {
 	includeObservationFormat?: boolean;
 }
@@ -273,6 +264,21 @@ function callClaude(
 	logger: Logger,
 	options: CallClaudeOptions = { includeObservationFormat: true }
 ): string | null {
+	// One-time version check with warning
+	if (!versionCheckDone) {
+		versionCheckDone = true;
+		const versionInfo = checkClaudeVersion();
+		if (!versionInfo.supported) {
+			logger.warn("Claude CLI version check failed", {
+				installed: versionInfo.version,
+				required: MIN_CLAUDE_VERSION,
+				reason: versionInfo.error,
+				hint: `Claude CLI ${MIN_CLAUDE_VERSION}+ required for --no-session-persistence flag. ` +
+					`Please upgrade: npm install -g @anthropic-ai/claude-code`,
+			});
+		}
+	}
+
 	// Build the full prompt from conversation history
 	const lastUserMessage = context.conversationHistory
 		.filter((m) => m.role === "user")
@@ -282,10 +288,6 @@ function callClaude(
 		logger.warn("No user message in conversation history");
 		return null;
 	}
-
-	// Write prompt to temp file (sanitize sessionId to prevent path traversal)
-	const safeSessionId = sanitizeSessionId(context.sessionId);
-	const tempFile = join(tmpdir(), `cc-mem-agent-${safeSessionId}-${Date.now()}.txt`);
 
 	try {
 		// Build system prompt with context
@@ -301,10 +303,12 @@ function callClaude(
 			fullPrompt = `${systemPrompt}\n\n${lastUserMessage.content}`;
 		}
 
-		writeFileSync(tempFile, fullPrompt, "utf-8");
-
-		// Call Claude CLI with agent session marker to prevent recursive hooks
-		const result = spawnSync("claude", ["-p", tempFile, "--output-format", "text"], {
+		// Call Claude CLI with stdin input instead of temp file
+		// Using "-p -" reads prompt from stdin, avoiding file path storage in session history
+		// CRITICAL: --no-session-persistence prevents this session from being stored
+		// Without it, --continue would pick up this agent session instead of user's actual conversation
+		const result = spawnSync("claude", ["-p", "-", "--no-session-persistence", "--output-format", "text"], {
+			input: fullPrompt,
 			encoding: "utf-8",
 			timeout: 120000, // 2 minute timeout
 			maxBuffer: 10 * 1024 * 1024, // 10MB buffer
@@ -335,15 +339,6 @@ function callClaude(
 	} catch (error) {
 		logger.error("Error calling Claude", { error: (error as Error).message });
 		return null;
-	} finally {
-		// Clean up temp file
-		if (existsSync(tempFile)) {
-			try {
-				unlinkSync(tempFile);
-			} catch {
-				// Ignore cleanup errors
-			}
-		}
 	}
 }
 

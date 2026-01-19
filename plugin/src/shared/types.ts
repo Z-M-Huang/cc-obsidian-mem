@@ -37,6 +37,17 @@ export interface StylingResult {
 	reason?: string;
 }
 
+export interface DeduplicationConfig {
+	enabled?: boolean;
+	threshold?: number;
+}
+
+export interface AIConfig {
+	enabled?: boolean;
+	model?: "sonnet" | "haiku" | "opus";
+	timeout?: number;
+}
+
 export interface Config {
 	vault: {
 		path: string;
@@ -62,6 +73,8 @@ export interface Config {
 	};
 	styling?: StylingConfig;
 	processing?: ProcessingConfig;
+	deduplication?: DeduplicationConfig;
+	ai?: AIConfig;
 	defaultProject?: string;
 }
 
@@ -408,6 +421,10 @@ export type LogLevel = "debug" | "info" | "warn" | "error";
 export type NoteType = "error" | "decision" | "pattern" | "file" | "learning";
 export type NoteStatus = "active" | "superseded" | "draft";
 
+export const MAX_ALIASES = 10;
+export const MAX_AI_CANDIDATES = 50;
+export const MAX_SUFFIX_ATTEMPTS = 100;
+
 export interface NoteFrontmatter {
 	type: NoteType;
 	title: string;
@@ -419,5 +436,7 @@ export interface NoteFrontmatter {
 	superseded_by?: string;
 	supersedes?: string[];
 	parent?: string;
+	entry_count?: number;
+	aliases?: string[];
 	[key: string]: unknown;
 }

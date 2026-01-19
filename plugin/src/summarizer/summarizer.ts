@@ -15,7 +15,10 @@ import {
 	getSessionFileReads,
 	upsertSessionSummary,
 } from "../sqlite/session-store.js";
-import { loadConfig, getConfigDir, AGENT_SESSION_MARKER } from "../shared/config.js";
+import { loadConfig, getConfigDir, AGENT_SESSION_MARKER, checkClaudeVersion, MIN_CLAUDE_VERSION, validateModel } from "../shared/config.js";
+
+// Track if we've already warned about version
+let versionCheckDone = false;
 import { createLogger, Logger } from "../shared/logger.js";
 import {
 	ensureProjectStructure,
@@ -115,10 +118,12 @@ export async function summarizeSession(
 		});
 
 		// Call Claude via CLI with proper system prompt separation
+		// Use model from config (defaults to sonnet if not configured)
 		const claudeOutput = await invokeClaudeCLI(
 			KNOWLEDGE_EXTRACTION_SYSTEM_PROMPT,
 			userPrompt,
-			logger
+			logger,
+			config.ai?.model
 		);
 
 		// Parse JSON response
@@ -246,16 +251,44 @@ export async function summarizeSession(
 
 /**
  * Invoke Claude CLI with proper system prompt separation
+ * @param systemPrompt - The system prompt for knowledge extraction
+ * @param userPrompt - The user prompt (session data)
+ * @param logger - Logger instance
+ * @param model - Optional model name (sonnet, haiku, opus). Defaults to configured model.
  */
 async function invokeClaudeCLI(
 	systemPrompt: string,
 	userPrompt: string,
-	logger: Logger
+	logger: Logger,
+	model?: string
 ): Promise<string> {
+	// One-time version check with warning
+	if (!versionCheckDone) {
+		versionCheckDone = true;
+		const versionInfo = checkClaudeVersion();
+		if (!versionInfo.supported) {
+			logger.warn("Claude CLI version check failed", {
+				installed: versionInfo.version,
+				required: MIN_CLAUDE_VERSION,
+				reason: versionInfo.error,
+				hint: `Claude CLI ${MIN_CLAUDE_VERSION}+ required for --no-session-persistence flag. ` +
+					`Please upgrade: npm install -g @anthropic-ai/claude-code`,
+			});
+		}
+	}
+
+	// Validate and use model
+	const validatedModel = validateModel(model);
+
 	return new Promise((resolve, reject) => {
 		// Use --system-prompt for extraction instructions, stdin for session data
+		// CRITICAL: --no-session-persistence prevents this session from being stored
+		// Without it, --continue would pick up this summarization session instead of user's actual conversation
 		const args = [
 			"-p",
+			"--no-session-persistence",
+			"--model",
+			validatedModel,
 			"--system-prompt",
 			systemPrompt,
 			"--output-format",

@@ -37,7 +37,9 @@ Obsidian-based persistent memory system for Claude Code. Automatically captures 
 - [Bun](https://bun.sh/) runtime installed
 - [Obsidian](https://obsidian.md/) with an existing vault
 - [Dataview plugin](https://github.com/blacksmithgu/obsidian-dataview) (recommended for dashboards)
-- Claude Code CLI
+- Claude Code CLI **v1.0.29 or later** (required for `--no-session-persistence` flag)
+  - Check your version: `claude --version`
+  - Upgrade if needed: `npm install -g @anthropic-ai/claude-code`
 
 ### Step 1: Install the Plugin
 
@@ -113,6 +115,10 @@ The wizard will prompt you for your Obsidian vault path and create the config fi
   "processing": {
     "frequency": "compact-only",
     "periodicInterval": 10
+  },
+  "deduplication": {
+    "enabled": true,
+    "threshold": 0.6
   }
 }
 ```
@@ -179,6 +185,23 @@ You have access to a persistent memory system via MCP tools. Use it proactively.
 ```
 
 You can also add this to your global `~/.claude/CLAUDE.md` to apply it to all projects.
+
+### Updating the Plugin
+
+When updating to a new version, we recommend a clean reinstall:
+
+```bash
+# 1. Uninstall the current version
+/plugin uninstall cc-obsidian-mem
+
+# 2. Reinstall from marketplace
+/plugin install cc-obsidian-mem
+
+# 3. Restart Claude Code session
+# Exit and start a new Claude session to load the updated hooks
+```
+
+> **Note**: Your configuration file (`~/.cc-obsidian-mem/config.json`) and all knowledge in your Obsidian vault are preserved during reinstall. Only the plugin code is updated.
 
 ---
 
@@ -345,6 +368,40 @@ For detailed troubleshooting, see the [Troubleshooting Wiki](https://github.com/
 
 Then view: `tail -f /tmp/cc-obsidian-mem-*.log`
 
+### `--continue` picks up wrong session
+
+If Claude's `--continue` command picks up an agent session instead of your actual conversation, this is caused by polluted session files from cc-obsidian-mem's background processes.
+
+**This was fixed in v1.0.2+** by using the `--no-session-persistence` flag. The cleanup below is only needed for sessions created with older versions.
+
+**Option 1: Delete all session history (simplest)**
+
+This removes all Claude Code session history. You won't be able to `--continue` any previous sessions.
+
+- **Windows:** Delete all contents in `%USERPROFILE%\.claude\projects`
+- **macOS/Linux:** `rm -rf ~/.claude/projects/*`
+
+**Option 2: Targeted cleanup (preserves other sessions)**
+
+Only removes sessions polluted by cc-obsidian-mem:
+
+**Windows (PowerShell):**
+
+```powershell
+Get-ChildItem "$env:USERPROFILE\.claude\projects" -Recurse -Filter "*.jsonl" |
+  Where-Object { (Get-Content $_.FullName -Raw) -match "cc-mem-agent|cc-obsidian-mem-" } |
+  Remove-Item -Force
+Get-ChildItem "$env:USERPROFILE\.claude\projects" -Recurse -Filter "sessions-index.json" |
+  Remove-Item -Force
+```
+
+**macOS/Linux:**
+
+```bash
+grep -rl "cc-mem-agent\|cc-obsidian-mem-" ~/.claude/projects --include="*.jsonl" | xargs rm -f
+find ~/.claude/projects -name "sessions-index.json" -delete
+```
+
 ---
 
 ## Development
@@ -386,7 +443,28 @@ Knowledge notes use **topic-based filenames** instead of date-prefixed filenames
 - Notes are named `authentication-bug.md` instead of `2026-01-15_authentication-bug.md`
 - When new knowledge matches an existing topic, it's **appended** to the existing note
 - Each entry within a note has a timestamp header (`## Entry: YYYY-MM-DD HH:MM`)
-- Matching uses exact slug comparison within the same category (case-insensitive)
+
+**Deduplication Algorithm** (v1.0.2+):
+
+- Uses **Jaccard word similarity** to match topics with similar (not just identical) titles
+- Searches **across all categories** to find similar topics, but only appends to **same-category** matches
+- Default threshold: 60% similarity (configurable)
+- Stopwords (common words like "the", "for", "in") are filtered before comparison
+- Falls back to exact slug matching for single-word titles
+
+**Configuration** (add to `~/.cc-obsidian-mem/config.json`):
+
+```json
+"deduplication": {
+  "enabled": true,
+  "threshold": 0.6
+}
+```
+
+| Option      | Values        | Description                                    |
+| ----------- | ------------- | ---------------------------------------------- |
+| `enabled`   | `true`/`false`| Enable cross-category deduplication (default: `true`) |
+| `threshold` | 0.0 - 1.0     | Similarity threshold (default: `0.6` = 60%)    |
 
 **Migration for existing vaults**: Existing date-prefixed notes continue to work. New knowledge will use topic-based filenames. You can manually merge duplicate notes if desired.
 

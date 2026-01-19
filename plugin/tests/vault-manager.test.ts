@@ -5,8 +5,9 @@
 import { describe, test, expect, afterEach } from "bun:test";
 import { existsSync, rmSync, readFileSync, writeFileSync, mkdirSync } from "fs";
 import { join } from "path";
-import { ensureProjectStructure, buildParentLink, CATEGORIES, getMemFolderPath, slugifyProjectName, findExistingTopicNote, appendToExistingNote, writeNote, readNote } from "../src/vault/vault-manager.js";
+import { ensureProjectStructure, buildParentLink, CATEGORIES, getMemFolderPath, slugifyProjectName, findExistingTopicNote, appendToExistingNote, writeNote, readNote, addAliasToNote, renameNoteWithGenericTitle, findSimilarTopicInCategory } from "../src/vault/vault-manager.js";
 import { generateFilename } from "../src/vault/note-builder.js";
+import { MAX_ALIASES } from "../src/shared/types.js";
 
 // Test with real config - cleanup test projects after
 const TEST_PROJECT = "test-vault-manager";
@@ -419,5 +420,409 @@ Initial content`, "utf-8");
 	test("returns false for non-existent note", () => {
 		const result = appendToExistingNote("/nonexistent/path.md", "content", []);
 		expect(result).toBe(false);
+	});
+});
+
+describe("addAliasToNote", () => {
+	test("adds alias to note without existing aliases", () => {
+		ensureProjectStructure(TEST_PROJECT);
+
+		const memPath = getMemFolderPath();
+		const projectPath = join(memPath, "projects", TEST_PROJECT);
+		const decisionsPath = join(projectPath, "decisions");
+		const notePath = join(decisionsPath, "test-alias.md");
+
+		// Create initial note without aliases
+		writeFileSync(notePath, `---
+type: "decision"
+title: "Test Alias"
+project: "${TEST_PROJECT}"
+created: "2026-01-01T00:00:00.000Z"
+tags: []
+status: "active"
+---
+
+Test content`, "utf-8");
+
+		// Add alias
+		const success = addAliasToNote(notePath, "Original Title");
+		expect(success).toBe(true);
+
+		// Verify alias was added
+		const content = readFileSync(notePath, "utf-8");
+		expect(content).toContain("aliases:");
+		expect(content).toContain("Original Title");
+	});
+
+	test("adds alias to note with existing aliases", () => {
+		ensureProjectStructure(TEST_PROJECT);
+
+		const memPath = getMemFolderPath();
+		const projectPath = join(memPath, "projects", TEST_PROJECT);
+		const decisionsPath = join(projectPath, "decisions");
+		const notePath = join(decisionsPath, "test-alias-existing.md");
+
+		// Create note with existing alias
+		writeFileSync(notePath, `---
+type: "decision"
+title: "Test Alias"
+project: "${TEST_PROJECT}"
+created: "2026-01-01T00:00:00.000Z"
+tags: []
+aliases: ["First Alias"]
+status: "active"
+---
+
+Test content`, "utf-8");
+
+		// Add another alias
+		const success = addAliasToNote(notePath, "Second Alias");
+		expect(success).toBe(true);
+
+		// Verify both aliases exist
+		const content = readFileSync(notePath, "utf-8");
+		expect(content).toContain("First Alias");
+		expect(content).toContain("Second Alias");
+	});
+
+	test("returns true if alias already exists (case-insensitive)", () => {
+		ensureProjectStructure(TEST_PROJECT);
+
+		const memPath = getMemFolderPath();
+		const projectPath = join(memPath, "projects", TEST_PROJECT);
+		const decisionsPath = join(projectPath, "decisions");
+		const notePath = join(decisionsPath, "test-alias-duplicate.md");
+
+		// Create note with existing alias
+		writeFileSync(notePath, `---
+type: "decision"
+title: "Test"
+project: "${TEST_PROJECT}"
+created: "2026-01-01T00:00:00.000Z"
+tags: []
+aliases: ["Existing Alias"]
+status: "active"
+---
+
+Test content`, "utf-8");
+
+		// Try to add same alias (different case)
+		const success = addAliasToNote(notePath, "existing alias");
+		expect(success).toBe(true); // Should succeed (already exists)
+
+		// Verify no duplicate was added
+		const content = readFileSync(notePath, "utf-8");
+		const aliasMatches = content.match(/Existing Alias/gi);
+		expect(aliasMatches?.length).toBe(1);
+	});
+
+	test("returns false for empty alias", () => {
+		ensureProjectStructure(TEST_PROJECT);
+
+		const memPath = getMemFolderPath();
+		const projectPath = join(memPath, "projects", TEST_PROJECT);
+		const decisionsPath = join(projectPath, "decisions");
+		const notePath = join(decisionsPath, "test-alias-empty.md");
+
+		writeFileSync(notePath, `---
+type: "decision"
+title: "Test"
+project: "${TEST_PROJECT}"
+created: "2026-01-01T00:00:00.000Z"
+tags: []
+---
+
+Test content`, "utf-8");
+
+		expect(addAliasToNote(notePath, "")).toBe(false);
+		expect(addAliasToNote(notePath, "   ")).toBe(false);
+	});
+
+	test("returns false for non-existent note", () => {
+		expect(addAliasToNote("/nonexistent/path.md", "alias")).toBe(false);
+	});
+
+	test("respects MAX_ALIASES limit", () => {
+		ensureProjectStructure(TEST_PROJECT);
+
+		const memPath = getMemFolderPath();
+		const projectPath = join(memPath, "projects", TEST_PROJECT);
+		const decisionsPath = join(projectPath, "decisions");
+		const notePath = join(decisionsPath, "test-alias-max.md");
+
+		// Create note with MAX_ALIASES aliases already
+		const existingAliases = Array.from({ length: MAX_ALIASES }, (_, i) => `Alias ${i + 1}`);
+		writeFileSync(notePath, `---
+type: "decision"
+title: "Test"
+project: "${TEST_PROJECT}"
+created: "2026-01-01T00:00:00.000Z"
+tags: []
+aliases: [${existingAliases.map(a => `"${a}"`).join(", ")}]
+---
+
+Test content`, "utf-8");
+
+		// Try to add one more - should fail
+		const success = addAliasToNote(notePath, "One More Alias");
+		expect(success).toBe(false);
+	});
+});
+
+describe("renameNoteWithGenericTitle", () => {
+	test("renames note to new slug", () => {
+		ensureProjectStructure(TEST_PROJECT);
+
+		const memPath = getMemFolderPath();
+		const projectPath = join(memPath, "projects", TEST_PROJECT);
+		const decisionsPath = join(projectPath, "decisions");
+		const originalPath = join(decisionsPath, "specific-pid-error.md");
+
+		// Create original note
+		writeFileSync(originalPath, `---
+type: "decision"
+title: "Specific PID Error"
+project: "${TEST_PROJECT}"
+created: "2026-01-01T00:00:00.000Z"
+tags: []
+---
+
+Test content`, "utf-8");
+
+		// Rename to generic title
+		const newPath = renameNoteWithGenericTitle(originalPath, "PID Issues");
+
+		expect(newPath).not.toBeNull();
+		expect(newPath).toContain("pid-issues.md");
+		expect(existsSync(newPath!)).toBe(true);
+		expect(existsSync(originalPath)).toBe(false);
+
+		// Clean up
+		if (newPath && existsSync(newPath)) {
+			rmSync(newPath);
+		}
+	});
+
+	test("returns original path if same slug", () => {
+		ensureProjectStructure(TEST_PROJECT);
+
+		const memPath = getMemFolderPath();
+		const projectPath = join(memPath, "projects", TEST_PROJECT);
+		const decisionsPath = join(projectPath, "decisions");
+		const originalPath = join(decisionsPath, "same-slug.md");
+
+		writeFileSync(originalPath, `---
+type: "decision"
+title: "Same Slug"
+project: "${TEST_PROJECT}"
+created: "2026-01-01T00:00:00.000Z"
+tags: []
+---
+
+Test content`, "utf-8");
+
+		// Rename to same slug (different casing)
+		const result = renameNoteWithGenericTitle(originalPath, "Same Slug");
+
+		expect(result).toBe(originalPath);
+		expect(existsSync(originalPath)).toBe(true);
+	});
+
+	test("handles collision with suffix", () => {
+		ensureProjectStructure(TEST_PROJECT);
+
+		const memPath = getMemFolderPath();
+		const projectPath = join(memPath, "projects", TEST_PROJECT);
+		const decisionsPath = join(projectPath, "decisions");
+		const originalPath = join(decisionsPath, "original-note.md");
+		const existingPath = join(decisionsPath, "target-name.md");
+
+		// Create original note
+		writeFileSync(originalPath, `---
+type: "decision"
+title: "Original"
+project: "${TEST_PROJECT}"
+created: "2026-01-01T00:00:00.000Z"
+tags: []
+---
+
+Original content`, "utf-8");
+
+		// Create existing note at target path
+		writeFileSync(existingPath, `---
+type: "decision"
+title: "Target Name"
+project: "${TEST_PROJECT}"
+created: "2026-01-01T00:00:00.000Z"
+tags: []
+---
+
+Existing content`, "utf-8");
+
+		// Rename should create target-name-2.md
+		const newPath = renameNoteWithGenericTitle(originalPath, "Target Name");
+
+		expect(newPath).not.toBeNull();
+		expect(newPath).toContain("target-name-2.md");
+		expect(existsSync(newPath!)).toBe(true);
+		expect(existsSync(existingPath)).toBe(true); // Original target still exists
+
+		// Clean up
+		if (newPath && existsSync(newPath)) {
+			rmSync(newPath);
+		}
+		if (existsSync(existingPath)) {
+			rmSync(existingPath);
+		}
+	});
+
+	test("returns original path for empty title", () => {
+		ensureProjectStructure(TEST_PROJECT);
+
+		const memPath = getMemFolderPath();
+		const projectPath = join(memPath, "projects", TEST_PROJECT);
+		const decisionsPath = join(projectPath, "decisions");
+		const originalPath = join(decisionsPath, "test-empty-title.md");
+
+		writeFileSync(originalPath, `---
+type: "decision"
+title: "Test"
+project: "${TEST_PROJECT}"
+created: "2026-01-01T00:00:00.000Z"
+tags: []
+---
+
+Test content`, "utf-8");
+
+		const result = renameNoteWithGenericTitle(originalPath, "");
+		expect(result).toBe(originalPath);
+	});
+
+	test("returns null for non-existent note", () => {
+		const result = renameNoteWithGenericTitle("/nonexistent/path.md", "New Title");
+		expect(result).toBeNull();
+	});
+
+	test("updates title in frontmatter", () => {
+		ensureProjectStructure(TEST_PROJECT);
+
+		const memPath = getMemFolderPath();
+		const projectPath = join(memPath, "projects", TEST_PROJECT);
+		const decisionsPath = join(projectPath, "decisions");
+		const originalPath = join(decisionsPath, "old-title-note.md");
+
+		writeFileSync(originalPath, `---
+type: "decision"
+title: "Old Title"
+project: "${TEST_PROJECT}"
+created: "2026-01-01T00:00:00.000Z"
+tags: []
+---
+
+Test content`, "utf-8");
+
+		const newPath = renameNoteWithGenericTitle(originalPath, "New Generic Title");
+
+		expect(newPath).not.toBeNull();
+		const content = readFileSync(newPath!, "utf-8");
+		expect(content).toContain('title: "New Generic Title"');
+
+		// Clean up
+		if (newPath && existsSync(newPath)) {
+			rmSync(newPath);
+		}
+	});
+});
+
+describe("Tiered matching with aliases", () => {
+	test("finds match via alias when title doesn't match directly", () => {
+		ensureProjectStructure(TEST_PROJECT);
+
+		const memPath = getMemFolderPath();
+		const projectPath = join(memPath, "projects", TEST_PROJECT);
+		const decisionsPath = join(projectPath, "decisions");
+		// Use filename that will have gray-zone score with search title
+		// "database-connection-pool" vs "database connection timeout" = ~0.5 Jaccard
+		const notePath = join(decisionsPath, "database-connection-pool.md");
+
+		// Create note with generic title but specific alias that will match
+		writeFileSync(notePath, `---
+type: "decision"
+title: "Database Connection Pool"
+project: "${TEST_PROJECT}"
+created: "2026-01-01T00:00:00.000Z"
+tags: []
+aliases: ["database connection timeout handling", "db timeout configuration"]
+---
+
+Test content about database connections`, "utf-8");
+
+		// Search with title that matches alias
+		// Jaccard("database-connection-timeout-handling", "database-connection-pool"):
+		// input words: [database, connection, timeout, handling]
+		// file words: [database, connection, pool]
+		// intersection: 2 (database, connection)
+		// union: 5 (database, connection, timeout, handling, pool)
+		// score: 2/5 = 0.4 (in gray zone 0.3-0.59)
+		// With alias match, should find it
+		const result = findSimilarTopicInCategory(
+			projectPath,
+			"decisions",
+			"Database Connection Timeout Handling",
+			0.6
+		);
+
+		// Should find the note via alias matching (alias has 100% match)
+		expect(result).not.toBeNull();
+		if (result) {
+			expect(result.path).toContain("database-connection-pool.md");
+		}
+	});
+
+	test("prefers direct slug match over alias match", () => {
+		ensureProjectStructure(TEST_PROJECT);
+
+		const memPath = getMemFolderPath();
+		const projectPath = join(memPath, "projects", TEST_PROJECT);
+		const decisionsPath = join(projectPath, "decisions");
+
+		// Create note with exact slug match
+		const exactMatchPath = join(decisionsPath, "authentication-bug.md");
+		writeFileSync(exactMatchPath, `---
+type: "decision"
+title: "Authentication Bug"
+project: "${TEST_PROJECT}"
+created: "2026-01-01T00:00:00.000Z"
+tags: []
+---
+
+Exact match content`, "utf-8");
+
+		// Create another note with authentication-bug as alias
+		const aliasMatchPath = join(decisionsPath, "security-issues.md");
+		writeFileSync(aliasMatchPath, `---
+type: "decision"
+title: "Security Issues"
+project: "${TEST_PROJECT}"
+created: "2026-01-01T00:00:00.000Z"
+tags: []
+aliases: ["authentication bug"]
+---
+
+Alias match content`, "utf-8");
+
+		// Search should find exact match
+		const result = findSimilarTopicInCategory(
+			projectPath,
+			"decisions",
+			"Authentication Bug",
+			0.6
+		);
+
+		expect(result).not.toBeNull();
+		expect(result?.path).toContain("authentication-bug.md");
+
+		// Clean up
+		rmSync(aliasMatchPath);
 	});
 });
