@@ -12,6 +12,8 @@ const CONFIG_DIR = join(homedir(), ".cc-obsidian-mem");
 const CONFIG_FILE = join(CONFIG_DIR, "config.json");
 export const LOCKS_DIR = join(CONFIG_DIR, "locks");
 
+export const VALID_MODELS = ["sonnet", "haiku", "opus"] as const;
+
 const DEFAULT_CONFIG: Config = {
 	vault: {
 		path: join(homedir(), "_claude-mem"),
@@ -50,6 +52,11 @@ const DEFAULT_CONFIG: Config = {
 		enabled: true,
 		threshold: 0.6,
 	},
+	ai: {
+		enabled: true,
+		model: "sonnet",
+		timeout: 30000,
+	},
 };
 
 /**
@@ -73,6 +80,17 @@ export function loadConfig(): Config {
 }
 
 /**
+ * Validate model name against allowlist
+ * @returns validated model or 'sonnet' default if invalid
+ */
+export function validateModel(model: unknown): "sonnet" | "haiku" | "opus" {
+	if (typeof model === "string" && VALID_MODELS.includes(model as "sonnet" | "haiku" | "opus")) {
+		return model as "sonnet" | "haiku" | "opus";
+	}
+	return "sonnet";
+}
+
+/**
  * Deep merge user config with defaults
  */
 function mergeConfig(defaults: Config, user: Partial<Config>): Config {
@@ -83,6 +101,20 @@ function mergeConfig(defaults: Config, user: Partial<Config>): Config {
 			deduplication.threshold = 0.6;
 		} else {
 			deduplication.threshold = Math.max(0, Math.min(1, deduplication.threshold));
+		}
+	}
+
+	// Validate AI config
+	let ai = { ...defaults.ai, ...user.ai };
+	if (ai.enabled !== undefined && typeof ai.enabled !== "boolean") {
+		ai.enabled = true;
+	}
+	if (ai.model !== undefined) {
+		ai.model = validateModel(ai.model);
+	}
+	if (ai.timeout !== undefined) {
+		if (typeof ai.timeout !== "number" || isNaN(ai.timeout) || ai.timeout <= 0) {
+			ai.timeout = 30000;
 		}
 	}
 
@@ -101,6 +133,7 @@ function mergeConfig(defaults: Config, user: Partial<Config>): Config {
 		styling: { ...defaults.styling, ...user.styling },
 		processing: { ...defaults.processing!, ...user.processing },
 		deduplication,
+		ai,
 		defaultProject: user.defaultProject ?? defaults.defaultProject,
 	};
 }

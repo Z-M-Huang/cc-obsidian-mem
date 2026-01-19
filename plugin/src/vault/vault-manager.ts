@@ -10,12 +10,16 @@ import {
 	readdirSync,
 	statSync,
 	mkdirSync,
+	renameSync,
+	unlinkSync,
 } from "fs";
 import { join, relative, dirname, basename } from "path";
+import { randomBytes } from "crypto";
 import { loadConfig } from "../shared/config.js";
 import { validatePath } from "../shared/security.js";
 import { createLogger } from "../shared/logger.js";
-import type { NoteFrontmatter } from "../shared/types.js";
+import type { NoteFrontmatter, Config } from "../shared/types.js";
+import { MAX_ALIASES, MAX_SUFFIX_ATTEMPTS } from "../shared/types.js";
 
 /**
  * List of valid category names for project structure
@@ -32,6 +36,14 @@ const STOPWORDS = new Set([
 	"may", "might", "must", "can", "how", "what", "when", "where", "why", "which",
 	"who", "whom"
 ]);
+
+/**
+ * Gray-zone threshold for alias checking
+ * Files with Jaccard score between GRAY_ZONE_MIN and GRAY_ZONE_MAX (exclusive of threshold)
+ * will have their frontmatter read to check aliases before escalating to AI
+ */
+const GRAY_ZONE_MIN = 0.3;
+const GRAY_ZONE_MAX = 0.59;
 
 export interface SearchResult {
 	path: string;
@@ -836,8 +848,68 @@ function scanCategoryForNotes(categoryPath: string, category: string, logger: Re
 }
 
 /**
+ * Gray-zone candidate for alias checking
+ */
+interface GrayZoneCandidate {
+	path: string;
+	category: string;
+	score: number;
+}
+
+/**
+ * Read note aliases from frontmatter
+ * Returns empty array on error or if no aliases
+ */
+function readNoteAliases(notePath: string, logger: ReturnType<typeof createLogger>): string[] {
+	try {
+		const note = readNote(notePath);
+		if (!note || !note.frontmatter.aliases) {
+			return [];
+		}
+		const aliases = note.frontmatter.aliases;
+		if (!Array.isArray(aliases)) {
+			return [];
+		}
+		return aliases.filter((a): a is string => typeof a === "string");
+	} catch (error) {
+		logger.debug("Failed to read aliases from note", { notePath, error: String(error) });
+		return [];
+	}
+}
+
+/**
+ * Compute Jaccard similarity including aliases
+ * Returns the maximum score between title-vs-slug and title-vs-any-alias
+ */
+function computeJaccardWithAliases(
+	inputWords: string[],
+	fileSlug: string,
+	aliases: string[]
+): number {
+	// Score against filename
+	const fileWords = extractSignificantWords(fileSlug);
+	let maxScore = computeJaccardSimilarity(inputWords, fileWords);
+
+	// Score against each alias
+	for (const alias of aliases) {
+		const aliasSlug = slugifyProjectName(alias).substring(0, 50);
+		const aliasWords = extractSignificantWords(aliasSlug);
+		const aliasScore = computeJaccardSimilarity(inputWords, aliasWords);
+		if (aliasScore > maxScore) {
+			maxScore = aliasScore;
+		}
+	}
+
+	return maxScore;
+}
+
+/**
  * Find existing note with similar topic across ALL categories
- * Uses Jaccard word similarity to match topics with slightly different titles
+ * Uses tiered matching:
+ *   Tier 1: Exact slug match (score 1.0)
+ *   Tier 2: Jaccard >= threshold (default 0.6)
+ *   Tier 3: Gray-zone (0.3-0.59) with alias checking
+ * Returns null if no match found (caller can then use AI fallback)
  */
 export function findSimilarTopicAcrossCategories(
 	projectPath: string,
@@ -865,7 +937,7 @@ export function findSimilarTopicAcrossCategories(
 	const inputSlug = slugifyProjectName(title).substring(0, 50);
 	const inputWords = extractSignificantWords(inputSlug);
 
-	// If less than 2 significant words, fall back to exact slug matching
+	// If less than 2 significant words, fall back to exact slug matching only
 	if (inputWords.length < 2) {
 		for (const category of CATEGORIES) {
 			const categoryPath = join(projectPath, category);
@@ -885,9 +957,12 @@ export function findSimilarTopicAcrossCategories(
 		return null;
 	}
 
-	// Find best match across all categories
+	// Tiered matching:
+	// - Tier 1 & 2: Find best match >= threshold
+	// - Collect gray-zone candidates (0.3-0.59) for tier 3
 	let bestMatch: SimilarTopicMatch | null = null;
 	let bestScore = 0;
+	const grayZoneCandidates: GrayZoneCandidate[] = [];
 
 	for (const category of CATEGORIES) {
 		const categoryPath = join(projectPath, category);
@@ -899,7 +974,7 @@ export function findSimilarTopicAcrossCategories(
 			const score = computeJaccardSimilarity(inputWords, fileWords);
 
 			if (score >= threshold) {
-				// Deterministic tie-breaking: higher score wins, alphabetical filename as tiebreaker
+				// Tier 1 & 2: Above threshold
 				if (score > bestScore || (score === bestScore && (!bestMatch || file < basename(bestMatch.path)))) {
 					bestScore = score;
 					bestMatch = {
@@ -908,21 +983,63 @@ export function findSimilarTopicAcrossCategories(
 						score
 					};
 				}
+			} else if (score >= GRAY_ZONE_MIN && score <= GRAY_ZONE_MAX) {
+				// Tier 3: Gray-zone candidate for alias checking
+				grayZoneCandidates.push({
+					path: join(categoryPath, file),
+					category,
+					score
+				});
 			}
 		}
 	}
 
-	logger.debug("Found similar topic", {
-		input: title,
-		match: bestMatch ? { path: bestMatch.path, score: bestMatch.score } : null
-	});
+	// If we found a match above threshold, return it
+	if (bestMatch) {
+		logger.debug("Found similar topic (tier 1/2)", {
+			input: title,
+			match: { path: bestMatch.path, score: bestMatch.score }
+		});
+		return bestMatch;
+	}
 
-	return bestMatch;
+	// Tier 3: Check gray-zone candidates with aliases
+	// Sort by score descending for priority
+	grayZoneCandidates.sort((a, b) => b.score - a.score);
+
+	for (const candidate of grayZoneCandidates) {
+		const aliases = readNoteAliases(candidate.path, logger);
+		if (aliases.length === 0) {
+			continue;
+		}
+
+		const fileSlug = basename(candidate.path, ".md");
+		const scoreWithAliases = computeJaccardWithAliases(inputWords, fileSlug, aliases);
+
+		if (scoreWithAliases >= threshold) {
+			logger.debug("Found similar topic via alias (tier 3)", {
+				input: title,
+				match: { path: candidate.path, score: scoreWithAliases, aliasMatch: true }
+			});
+			return {
+				path: candidate.path,
+				category: candidate.category,
+				score: scoreWithAliases
+			};
+		}
+	}
+
+	logger.debug("No similar topic found", { input: title });
+	return null;
 }
 
 /**
  * Find existing note with similar topic within a SINGLE category
- * Uses Jaccard word similarity to match topics with slightly different titles
+ * Uses tiered matching:
+ *   Tier 1: Exact slug match (score 1.0)
+ *   Tier 2: Jaccard >= threshold (default 0.6)
+ *   Tier 3: Gray-zone (0.3-0.59) with alias checking
+ * Returns null if no match found (caller can then use AI fallback)
  */
 export function findSimilarTopicInCategory(
 	projectPath: string,
@@ -954,7 +1071,7 @@ export function findSimilarTopicInCategory(
 	const categoryPath = join(projectPath, category);
 	const files = scanCategoryForNotes(categoryPath, category, logger);
 
-	// If less than 2 significant words, fall back to exact slug matching
+	// If less than 2 significant words, fall back to exact slug matching only
 	if (inputWords.length < 2) {
 		for (const file of files) {
 			const fileSlug = file.replace(/\.md$/, "");
@@ -969,9 +1086,10 @@ export function findSimilarTopicInCategory(
 		return null;
 	}
 
-	// Find best match within the category
+	// Tiered matching within category
 	let bestMatch: SimilarTopicMatch | null = null;
 	let bestScore = 0;
+	const grayZoneCandidates: GrayZoneCandidate[] = [];
 
 	for (const file of files) {
 		const fileSlug = file.replace(/\.md$/, "");
@@ -979,7 +1097,7 @@ export function findSimilarTopicInCategory(
 		const score = computeJaccardSimilarity(inputWords, fileWords);
 
 		if (score >= threshold) {
-			// Deterministic tie-breaking: higher score wins, alphabetical filename as tiebreaker
+			// Tier 1 & 2: Above threshold
 			if (score > bestScore || (score === bestScore && (!bestMatch || file < basename(bestMatch.path)))) {
 				bestScore = score;
 				bestMatch = {
@@ -988,14 +1106,300 @@ export function findSimilarTopicInCategory(
 					score
 				};
 			}
+		} else if (score >= GRAY_ZONE_MIN && score <= GRAY_ZONE_MAX) {
+			// Tier 3: Gray-zone candidate for alias checking
+			grayZoneCandidates.push({
+				path: join(categoryPath, file),
+				category,
+				score
+			});
 		}
 	}
 
-	logger.debug("Found similar topic in category", {
-		input: title,
-		category,
-		match: bestMatch ? { path: bestMatch.path, score: bestMatch.score } : null
-	});
+	// If we found a match above threshold, return it
+	if (bestMatch) {
+		logger.debug("Found similar topic in category (tier 1/2)", {
+			input: title,
+			category,
+			match: { path: bestMatch.path, score: bestMatch.score }
+		});
+		return bestMatch;
+	}
 
-	return bestMatch;
+	// Tier 3: Check gray-zone candidates with aliases
+	grayZoneCandidates.sort((a, b) => b.score - a.score);
+
+	for (const candidate of grayZoneCandidates) {
+		const aliases = readNoteAliases(candidate.path, logger);
+		if (aliases.length === 0) {
+			continue;
+		}
+
+		const fileSlug = basename(candidate.path, ".md");
+		const scoreWithAliases = computeJaccardWithAliases(inputWords, fileSlug, aliases);
+
+		if (scoreWithAliases >= threshold) {
+			logger.debug("Found similar topic in category via alias (tier 3)", {
+				input: title,
+				category,
+				match: { path: candidate.path, score: scoreWithAliases, aliasMatch: true }
+			});
+			return {
+				path: candidate.path,
+				category: candidate.category,
+				score: scoreWithAliases
+			};
+		}
+	}
+
+	logger.debug("No similar topic found in category", { input: title, category });
+	return null;
+}
+
+/**
+ * Add an alias to a note's frontmatter
+ * Respects MAX_ALIASES limit and deduplicates
+ * @param notePath - Path to the note
+ * @param alias - Alias to add
+ * @returns true if alias was added (or already exists), false on error
+ */
+export function addAliasToNote(notePath: string, alias: string): boolean {
+	const logger = createLogger({ verbose: false });
+
+	// Validate alias
+	if (!alias || alias.trim().length === 0) {
+		logger.warn("Cannot add empty alias", { notePath });
+		return false;
+	}
+
+	const trimmedAlias = alias.trim();
+
+	try {
+		const note = readNote(notePath);
+		if (!note) {
+			logger.error("Failed to read note for adding alias", { notePath });
+			return false;
+		}
+
+		// Get existing aliases or initialize empty array
+		const existingAliases = Array.isArray(note.frontmatter.aliases)
+			? note.frontmatter.aliases.filter((a): a is string => typeof a === "string")
+			: [];
+
+		// Check if alias already exists (case-insensitive)
+		const aliasLower = trimmedAlias.toLowerCase();
+		if (existingAliases.some(a => a.toLowerCase() === aliasLower)) {
+			logger.debug("Alias already exists", { notePath, alias: trimmedAlias });
+			return true; // Success - alias already there
+		}
+
+		// Check MAX_ALIASES limit
+		if (existingAliases.length >= MAX_ALIASES) {
+			logger.warn("Note has reached MAX_ALIASES limit", {
+				notePath,
+				maxAliases: MAX_ALIASES,
+				currentCount: existingAliases.length
+			});
+			return false;
+		}
+
+		// Add alias
+		const updatedAliases = [...existingAliases, trimmedAlias];
+
+		// Update frontmatter
+		const updatedFrontmatter: NoteFrontmatter = {
+			...note.frontmatter,
+			aliases: updatedAliases,
+			updated: new Date().toISOString()
+		};
+
+		// Write updated note
+		const success = writeNote(notePath, updatedFrontmatter, note.content);
+
+		if (success) {
+			logger.debug("Added alias to note", { notePath, alias: trimmedAlias });
+		} else {
+			logger.error("Failed to write note after adding alias", { notePath });
+		}
+
+		return success;
+	} catch (error) {
+		logger.error("Error adding alias to note", {
+			notePath,
+			alias: trimmedAlias,
+			error: String(error)
+		});
+		return false;
+	}
+}
+
+/**
+ * Rename a note to use a generic title
+ * Uses atomic write (temp file + rename) with collision handling
+ * @param notePath - Path to the existing note
+ * @param genericTitle - The new generic title to use
+ * @returns New path if renamed, original path if unchanged, null on error
+ */
+export function renameNoteWithGenericTitle(
+	notePath: string,
+	genericTitle: string
+): string | null {
+	const logger = createLogger({ verbose: false });
+	const config = loadConfig();
+
+	// Validate inputs
+	if (!genericTitle || genericTitle.trim().length === 0) {
+		logger.warn("Cannot rename note with empty title", { notePath });
+		return notePath; // Return original path unchanged
+	}
+
+	if (!existsSync(notePath)) {
+		logger.error("Note does not exist for renaming", { notePath });
+		return null;
+	}
+
+	try {
+		// Validate path is within vault
+		validatePath(notePath, config.vault.path);
+	} catch {
+		logger.error("Note path outside vault", { notePath });
+		return null;
+	}
+
+	// Generate new filename from generic title
+	const newSlug = slugifyProjectName(genericTitle).substring(0, 50);
+	if (newSlug.length === 0) {
+		logger.warn("Generic title produced empty slug", { notePath, genericTitle });
+		return notePath; // Return original path unchanged
+	}
+
+	const dir = dirname(notePath);
+	const currentSlug = basename(notePath, ".md");
+
+	// If same slug, no rename needed
+	if (newSlug === currentSlug) {
+		logger.debug("Note already has target slug", { notePath, slug: newSlug });
+		return notePath;
+	}
+
+	// Find available filename with collision handling
+	let targetPath = join(dir, `${newSlug}.md`);
+	let suffix = 1;
+
+	while (existsSync(targetPath) && suffix <= MAX_SUFFIX_ATTEMPTS) {
+		suffix++;
+		targetPath = join(dir, `${newSlug}-${suffix}.md`);
+	}
+
+	if (suffix > MAX_SUFFIX_ATTEMPTS) {
+		logger.error("Could not find available filename after max attempts", {
+			notePath,
+			targetSlug: newSlug,
+			maxAttempts: MAX_SUFFIX_ATTEMPTS
+		});
+		return null;
+	}
+
+	try {
+		// Read current note
+		const note = readNote(notePath);
+		if (!note) {
+			logger.error("Failed to read note for renaming", { notePath });
+			return null;
+		}
+
+		// Update frontmatter with new title
+		const updatedFrontmatter: NoteFrontmatter = {
+			...note.frontmatter,
+			title: genericTitle.trim(),
+			updated: new Date().toISOString()
+		};
+
+		// Build new content
+		const newContent = buildNoteContentInternal(updatedFrontmatter, note.content);
+
+		// Atomic write: write to temp file first
+		const tempPath = join(dir, `.tmp-${randomBytes(8).toString("hex")}.md`);
+
+		try {
+			writeFileSync(tempPath, newContent, "utf-8");
+		} catch (writeError) {
+			logger.error("Failed to write temp file", { tempPath, error: String(writeError) });
+			return null;
+		}
+
+		// Rename temp file to target
+		try {
+			renameSync(tempPath, targetPath);
+		} catch (renameError) {
+			// Clean up temp file
+			try {
+				unlinkSync(tempPath);
+			} catch {
+				// Ignore cleanup error
+			}
+			logger.error("Failed to rename temp file to target", {
+				tempPath,
+				targetPath,
+				error: String(renameError)
+			});
+			return null;
+		}
+
+		// Delete original file
+		try {
+			unlinkSync(notePath);
+		} catch (deleteError) {
+			logger.warn("Failed to delete original file after rename", {
+				notePath,
+				error: String(deleteError)
+			});
+			// Note: We still return targetPath since the new file was created successfully
+		}
+
+		logger.debug("Renamed note to generic title", {
+			originalPath: notePath,
+			newPath: targetPath,
+			genericTitle
+		});
+
+		return targetPath;
+	} catch (error) {
+		logger.error("Error renaming note", {
+			notePath,
+			genericTitle,
+			error: String(error)
+		});
+		return null;
+	}
+}
+
+/**
+ * Internal helper to build note content from frontmatter and body
+ * Used by renameNoteWithGenericTitle for atomic writes
+ */
+function buildNoteContentInternal(
+	frontmatter: NoteFrontmatter,
+	content: string
+): string {
+	const frontmatterLines: string[] = ["---"];
+
+	for (const [key, value] of Object.entries(frontmatter)) {
+		if (value === undefined || value === null) {
+			continue;
+		}
+
+		if (Array.isArray(value)) {
+			frontmatterLines.push(`${key}: [${value.map((v) => `"${v}"`).join(", ")}]`);
+		} else if (typeof value === "string") {
+			frontmatterLines.push(`${key}: "${value.replace(/"/g, '\\"')}"`);
+		} else {
+			frontmatterLines.push(`${key}: ${value}`);
+		}
+	}
+
+	frontmatterLines.push("---");
+	frontmatterLines.push("");
+
+	return frontmatterLines.join("\n") + content;
 }

@@ -186,6 +186,23 @@ You have access to a persistent memory system via MCP tools. Use it proactively.
 
 You can also add this to your global `~/.claude/CLAUDE.md` to apply it to all projects.
 
+### Updating the Plugin
+
+When updating to a new version, we recommend a clean reinstall:
+
+```bash
+# 1. Uninstall the current version
+/plugin uninstall cc-obsidian-mem
+
+# 2. Reinstall from marketplace
+/plugin install cc-obsidian-mem
+
+# 3. Restart Claude Code session
+# Exit and start a new Claude session to load the updated hooks
+```
+
+> **Note**: Your configuration file (`~/.cc-obsidian-mem/config.json`) and all knowledge in your Obsidian vault are preserved during reinstall. Only the plugin code is updated.
+
 ---
 
 ## Usage
@@ -355,7 +372,7 @@ Then view: `tail -f /tmp/cc-obsidian-mem-*.log`
 
 If Claude's `--continue` command picks up an agent session instead of your actual conversation, this is caused by polluted session files from cc-obsidian-mem's background processes.
 
-**This was fixed in v1.0.4+** by using the `--no-session-persistence` flag. The cleanup below is only needed for sessions created with older versions.
+**This was fixed in v1.0.2+** by using the `--no-session-persistence` flag. The cleanup below is only needed for sessions created with older versions.
 
 **Option 1: Delete all session history (simplest)**
 
