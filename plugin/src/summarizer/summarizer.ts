@@ -25,13 +25,21 @@ import {
 	buildParentLink,
 	findExistingTopicNote,
 	appendToExistingNote,
+	findSimilarTopicAcrossCategories,
+	findSimilarTopicInCategory,
+	addAliasToNote,
+	collectNotesForAI,
+	renameNoteWithGenericTitle,
+	getProjectPath,
+	type SimilarTopicMatch,
 } from "../vault/vault-manager.js";
+import { findSemanticMatch } from "../vault/ai-matcher.js";
 import { generateFilename } from "../vault/note-builder.js";
 import {
 	KNOWLEDGE_EXTRACTION_SYSTEM_PROMPT,
 	buildSessionPrompt,
 } from "./prompts.js";
-import type { CompletionMarker } from "../shared/types.js";
+import type { CompletionMarker, Config } from "../shared/types.js";
 
 interface ExtractedKnowledge {
 	decisions: Array<{ title: string; content: string; tags: string[] }>;
@@ -151,7 +159,9 @@ export async function summarizeSession(
 					decision.content,
 					decision.tags,
 					projectSlug,
-					memFolder
+					memFolder,
+					config,
+					logger
 				);
 				if (notePath) {
 					writtenNotes.push(notePath);
@@ -168,7 +178,9 @@ export async function summarizeSession(
 					pattern.content,
 					pattern.tags,
 					projectSlug,
-					memFolder
+					memFolder,
+					config,
+					logger
 				);
 				if (notePath) {
 					writtenNotes.push(notePath);
@@ -186,7 +198,9 @@ export async function summarizeSession(
 					content,
 					error.tags,
 					projectSlug,
-					memFolder
+					memFolder,
+					config,
+					logger
 				);
 				if (notePath) {
 					writtenNotes.push(notePath);
@@ -203,7 +217,9 @@ export async function summarizeSession(
 					learning.content,
 					learning.tags,
 					projectSlug,
-					memFolder
+					memFolder,
+					config,
+					logger
 				);
 				if (notePath) {
 					writtenNotes.push(notePath);
@@ -221,7 +237,9 @@ export async function summarizeSession(
 					content,
 					qa.tags,
 					projectSlug,
-					memFolder
+					memFolder,
+					config,
+					logger
 				);
 				if (notePath) {
 					writtenNotes.push(notePath);
@@ -418,7 +436,7 @@ function ensureDirectories(projectPath: string): void {
 
 /**
  * Write a knowledge note to the vault (with topic-based deduplication)
- * Checks for existing notes with same topic slug and appends if found
+ * Uses Jaccard similarity + AI fallback to find existing notes with similar topics
  */
 function writeKnowledgeNote(
 	projectPath: string,
@@ -427,16 +445,120 @@ function writeKnowledgeNote(
 	content: string,
 	tags: string[],
 	project: string,
-	memFolder: string
+	memFolder: string,
+	config: Config,
+	logger: Logger
 ): string | null {
 	try {
-		// Check for existing note with same topic
-		const existingNotePath = findExistingTopicNote(projectPath, category, title);
+		// Check for existing note with similar topic (cross-category deduplication)
+		let existingNote: SimilarTopicMatch | null = null;
+		if (config.deduplication?.enabled !== false) {
+			existingNote = findSimilarTopicAcrossCategories(
+				projectPath,
+				title,
+				config.deduplication?.threshold
+			);
+		} else {
+			// Fallback to exact matching within category
+			const exactMatch = findExistingTopicNote(projectPath, category, title);
+			if (exactMatch) {
+				existingNote = { path: exactMatch, category, score: 1.0 };
+			}
+		}
 
-		if (existingNotePath) {
-			// Append to existing note
-			const success = appendToExistingNote(existingNotePath, content, tags);
-			return success ? existingNotePath : null;
+		// Determine target note for appending
+		let targetNote: SimilarTopicMatch | null = null;
+		if (existingNote && existingNote.category === category) {
+			// Same-category match - use it
+			targetNote = existingNote;
+		} else if (existingNote && existingNote.category !== category) {
+			// Cross-category match - try same-category similarity fallback to avoid missing valid matches
+			const sameCategoryMatch = findSimilarTopicInCategory(
+				projectPath,
+				category,
+				title,
+				config.deduplication?.threshold
+			);
+			if (sameCategoryMatch) {
+				targetNote = sameCategoryMatch;
+			}
+		}
+
+		if (targetNote) {
+			// Append to existing note (same category only)
+			const success = appendToExistingNote(targetNote.path, content, tags);
+			if (success) {
+				logger.debug("Appended to existing note via Jaccard", {
+					path: targetNote.path,
+					score: targetNote.score,
+					category: targetNote.category
+				});
+				return targetNote.path;
+			} else {
+				logger.warn("Jaccard match found but append failed", { path: targetNote.path });
+				// Fall through to AI or create new note
+			}
+		}
+
+		// AI Fallback: If Jaccard didn't find a match and AI is enabled, try semantic matching
+		if (config.ai?.enabled) {
+			try {
+				const existingNotes = collectNotesForAI(projectPath);
+				if (existingNotes.length > 0) {
+					const aiMatch = findSemanticMatch(title, existingNotes, config);
+
+					if (aiMatch && (aiMatch.confidence === "high" || aiMatch.confidence === "medium")) {
+						logger.debug("AI found semantic match", {
+							title,
+							matchedPath: aiMatch.path,
+							confidence: aiMatch.confidence,
+							genericTitle: aiMatch.genericTitle
+						});
+
+						// Append content to matched note
+						const appendSuccess = appendToExistingNote(aiMatch.path, content, tags);
+						if (!appendSuccess) {
+							logger.warn("AI match found but append failed", { path: aiMatch.path });
+							// Fall through to create new note
+						} else {
+							// Add original title as alias for future Jaccard matching
+							try {
+								addAliasToNote(aiMatch.path, title);
+							} catch (aliasError) {
+								logger.warn("Failed to add alias after AI match", {
+									path: aiMatch.path,
+									title,
+									error: String(aliasError)
+								});
+							}
+
+							// Rename to generic title if AI suggested one
+							let finalPath = aiMatch.path;
+							if (aiMatch.genericTitle && aiMatch.genericTitle !== aiMatch.title) {
+								try {
+									const renamedPath = renameNoteWithGenericTitle(aiMatch.path, aiMatch.genericTitle);
+									if (renamedPath) {
+										finalPath = renamedPath;
+									}
+								} catch (renameError) {
+									logger.warn("Failed to rename to generic title", {
+										path: aiMatch.path,
+										genericTitle: aiMatch.genericTitle,
+										error: String(renameError)
+									});
+								}
+							}
+
+							return finalPath;
+						}
+					}
+				}
+			} catch (aiError) {
+				logger.warn("AI fallback failed, creating new note", {
+					error: String(aiError)
+				});
+				// Fall through to create new note
+			}
 		}
 
 		// Create new note with topic-based filename
@@ -460,9 +582,10 @@ entry_count: 1
 		const fullContent = frontmatter + content;
 		writeFileSync(filePath, fullContent, "utf-8");
 
+		logger.debug("Created new note", { path: filePath });
 		return filePath;
 	} catch (error) {
-		console.error("Failed to write knowledge note", { error, projectPath, category, title });
+		logger.error("Failed to write knowledge note", { error, projectPath, category, title });
 		return null;
 	}
 }

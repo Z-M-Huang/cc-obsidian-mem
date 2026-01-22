@@ -19,7 +19,7 @@ import { loadConfig } from "../shared/config.js";
 import { validatePath } from "../shared/security.js";
 import { createLogger } from "../shared/logger.js";
 import type { NoteFrontmatter, Config } from "../shared/types.js";
-import { MAX_ALIASES, MAX_SUFFIX_ATTEMPTS } from "../shared/types.js";
+import { MAX_ALIASES, MAX_SUFFIX_ATTEMPTS, MAX_AI_CANDIDATES } from "../shared/types.js";
 
 /**
  * List of valid category names for project structure
@@ -63,6 +63,12 @@ export interface SimilarTopicMatch {
 	path: string;
 	category: string;
 	score: number;
+}
+
+export interface NoteInfo {
+	path: string;
+	title: string;
+	category: string;
 }
 
 /**
@@ -1418,4 +1424,54 @@ function buildNoteContentInternal(
 	frontmatterLines.push("");
 
 	return frontmatterLines.join("\n") + content;
+}
+
+/**
+ * Collect notes from a project for AI matching
+ * Scans all category folders and collects up to MAX_AI_CANDIDATES notes
+ */
+export function collectNotesForAI(projectPath: string): NoteInfo[] {
+	const notes: NoteInfo[] = [];
+
+	for (const category of CATEGORIES) {
+		const categoryPath = join(projectPath, category);
+		if (!existsSync(categoryPath)) {
+			continue;
+		}
+
+		try {
+			const files = readdirSync(categoryPath);
+			const categoryIndexFile = `${category}.md`;
+
+			for (const file of files) {
+				if (!file.endsWith(".md") || file === categoryIndexFile) {
+					continue;
+				}
+
+				const filePath = join(categoryPath, file);
+				const stat = statSync(filePath);
+				if (!stat.isFile()) {
+					continue;
+				}
+
+				// Extract title from filename (remove .md extension)
+				const title = file.replace(/\.md$/, "").replace(/-/g, " ");
+
+				notes.push({
+					path: filePath,
+					title,
+					category,
+				});
+
+				// Limit to MAX_AI_CANDIDATES
+				if (notes.length >= MAX_AI_CANDIDATES) {
+					return notes;
+				}
+			}
+		} catch {
+			// Skip directories we can't read
+		}
+	}
+
+	return notes;
 }

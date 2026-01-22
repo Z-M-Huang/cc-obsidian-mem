@@ -27,12 +27,13 @@ import {
 	slugifyProjectName,
 	addAliasToNote,
 	renameNoteWithGenericTitle,
+	collectNotesForAI,
 	CATEGORIES,
 	type SimilarTopicMatch,
+	type NoteInfo,
 } from "../vault/vault-manager.js";
 import {
 	findSemanticMatch,
-	type NoteInfo,
 } from "../vault/ai-matcher.js";
 import {
 	generateAllCanvases,
@@ -50,60 +51,9 @@ import {
 import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync, renameSync, readdirSync, statSync } from "fs";
 import { join, dirname, basename } from "path";
 import type { NoteType } from "../shared/types.js";
-import { MAX_AI_CANDIDATES } from "../shared/types.js";
 
 type TextContent = { type: "text"; text: string };
 type ToolResult = { content: TextContent[]; isError?: boolean };
-
-/**
- * Collect notes from a project for AI matching
- * Scans all category folders and collects up to MAX_AI_CANDIDATES notes
- */
-function collectNotesForAI(projectPath: string): NoteInfo[] {
-	const notes: NoteInfo[] = [];
-
-	for (const category of CATEGORIES) {
-		const categoryPath = join(projectPath, category);
-		if (!existsSync(categoryPath)) {
-			continue;
-		}
-
-		try {
-			const files = readdirSync(categoryPath);
-			const categoryIndexFile = `${category}.md`;
-
-			for (const file of files) {
-				if (!file.endsWith(".md") || file === categoryIndexFile) {
-					continue;
-				}
-
-				const filePath = join(categoryPath, file);
-				const stat = statSync(filePath);
-				if (!stat.isFile()) {
-					continue;
-				}
-
-				// Extract title from filename (remove .md extension)
-				const title = file.replace(/\.md$/, "").replace(/-/g, " ");
-
-				notes.push({
-					path: filePath,
-					title,
-					category,
-				});
-
-				// Limit to MAX_AI_CANDIDATES
-				if (notes.length >= MAX_AI_CANDIDATES) {
-					return notes;
-				}
-			}
-		} catch {
-			// Skip directories we can't read
-		}
-	}
-
-	return notes;
-}
 
 async function main() {
 	const config = loadConfig();
@@ -116,7 +66,7 @@ async function main() {
 
 	const server = new McpServer({
 		name: "obsidian-mem",
-		version: "1.0.3",
+		version: "1.0.4",
 	});
 
 	// ========================================================================
