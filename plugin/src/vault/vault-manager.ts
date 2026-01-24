@@ -20,6 +20,7 @@ import { validatePath } from "../shared/security.js";
 import { createLogger } from "../shared/logger.js";
 import type { NoteFrontmatter, Config } from "../shared/types.js";
 import { MAX_ALIASES, MAX_SUFFIX_ATTEMPTS, MAX_AI_CANDIDATES } from "../shared/types.js";
+import { applyStyling } from "./styling.js";
 
 /**
  * List of valid category names for project structure
@@ -738,9 +739,12 @@ export function ensureProjectStructure(project: string): string {
 	const memFolder = config.vault.memFolder || "_claude-mem";
 	const projectPath = getProjectPath(slug);
 
+	// Track if this is a new project (for styling)
+	const isNewProject = !existsSync(projectPath);
+
 	try {
 		// Ensure project directory exists
-		if (!existsSync(projectPath)) {
+		if (isNewProject) {
 			mkdirSync(projectPath, { recursive: true });
 		}
 
@@ -760,6 +764,12 @@ export function ensureProjectStructure(project: string): string {
 		const canvasesPath = join(projectPath, "canvases");
 		if (!existsSync(canvasesPath)) {
 			mkdirSync(canvasesPath, { recursive: true });
+		}
+
+		// Apply styling for new projects (CSS snippet + graph colors)
+		if (isNewProject && config.styling?.enabled !== false) {
+			const vaultPath = config.vault.path;
+			applyStyling(vaultPath, slug, memFolder, config.styling || {});
 		}
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
