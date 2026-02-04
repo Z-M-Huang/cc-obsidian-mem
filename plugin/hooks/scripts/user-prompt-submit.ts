@@ -11,7 +11,7 @@
 import { loadConfig, isAgentSession } from "../../src/shared/config.js";
 import { createLogger } from "../../src/shared/logger.js";
 import { initDatabase } from "../../src/sqlite/database.js";
-import { addUserPrompt, getSession, getNextPromptNumber } from "../../src/sqlite/session-store.js";
+import { addUserPrompt, createSession, getSession, getNextPromptNumber } from "../../src/sqlite/session-store.js";
 import { enqueueMessage } from "../../src/sqlite/pending-store.js";
 import { generateContext, generateCompactContext } from "../../src/context/context-builder.js";
 import {
@@ -21,6 +21,7 @@ import {
 	getFallbackNextPromptNumber,
 } from "../../src/fallback/fallback-store.js";
 import { validate, UserPromptSubmitPayloadSchema } from "../../src/shared/validation.js";
+import { detectProjectName } from "../../src/shared/project-detection.js";
 
 // Claude Code sends snake_case fields
 interface UserPromptSubmitInput {
@@ -88,12 +89,23 @@ async function main() {
 		try {
 			const db = initDatabase(config.sqlite.path!, logger);
 
-			// Check session exists and is active
-			const session = getSession(db, validated.sessionId);
+			// Check session exists - create lazily if not found
+			// Session creation was moved here from SessionStart hook to avoid
+			// a race condition in Claude Code that prevents the REPL from mounting
+			let session = getSession(db, validated.sessionId);
 			if (!session) {
-				logger.warn("Session not found, skipping prompt recording");
-				db.close();
-				return;
+				const projectName = detectProjectName(process.cwd(), config.defaultProject);
+				createSession(db, validated.sessionId, projectName);
+				logger.info("Session lazily created", {
+					sessionId: validated.sessionId,
+					project: projectName,
+				});
+				session = getSession(db, validated.sessionId);
+				if (!session) {
+					logger.warn("Session creation failed, skipping prompt recording");
+					db.close();
+					return;
+				}
 			}
 
 			// Auto-assign prompt number (Claude Code doesn't send this)
@@ -142,10 +154,14 @@ async function main() {
 		} catch (sqliteError) {
 			logger.warn("SQLite error, using fallback storage", { error: sqliteError });
 
-			// Fallback to JSON storage
+			// Fallback to JSON storage - create session lazily if needed
 			if (!fallbackSessionExists(validated.sessionId)) {
-				logger.warn("Fallback session not found, cannot record prompt");
-				return;
+				const projectName = detectProjectName(process.cwd(), config.defaultProject);
+				initFallbackSession(validated.sessionId, projectName);
+				logger.info("Fallback session lazily created", {
+					sessionId: validated.sessionId,
+					project: projectName,
+				});
 			}
 
 			// Auto-assign prompt number in fallback too

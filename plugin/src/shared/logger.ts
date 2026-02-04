@@ -3,7 +3,8 @@
  * Logs to session-specific files in temp directory
  */
 
-import { appendFileSync, existsSync, mkdirSync, statSync, unlinkSync, readdirSync } from "fs";
+import { appendFileSync, existsSync, mkdirSync, statSync, unlinkSync } from "fs";
+import { readdir, stat, unlink } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
 import type { LogContext, LogLevel } from "./types.js";
@@ -25,9 +26,6 @@ export class Logger {
 		if (!existsSync(this.logDir)) {
 			mkdirSync(this.logDir, { recursive: true });
 		}
-
-		// Clean old logs on initialization
-		this.cleanOldLogs();
 	}
 
 	/**
@@ -97,10 +95,8 @@ export class Logger {
 			}
 
 			appendFileSync(logFile, logLine);
-		} catch (error) {
-			// Fallback to console if file write fails
-			console.error("Failed to write log:", error);
-			console.log(logLine);
+		} catch {
+			// Silently swallow - cannot write to stdout/stderr in MCP stdio context
 		}
 	}
 
@@ -123,32 +119,36 @@ export class Logger {
 			// Simple rotation: delete old, keep current
 			// For session logs, we don't need complex rotation
 			unlinkSync(logFile);
-		} catch (error) {
-			console.error("Failed to rotate log:", error);
+		} catch {
+			// Silently swallow - cannot write to stdout/stderr in MCP stdio context
 		}
 	}
 
 	/**
-	 * Clean logs older than retention period
+	 * Clean logs older than retention period (async)
 	 */
-	private cleanOldLogs(): void {
+	async cleanOldLogsAsync(): Promise<void> {
 		try {
 			const now = Date.now();
-			const files = readdirSync(this.logDir);
+			const files = await readdir(this.logDir);
 
 			for (const file of files) {
 				if (file.startsWith("cc-obsidian-mem-") && file.endsWith(".log")) {
 					const filePath = join(this.logDir, file);
-					const stats = statSync(filePath);
-					const ageHours = (now - stats.mtimeMs) / (1000 * 60 * 60);
+					try {
+						const stats = await stat(filePath);
+						const ageHours = (now - stats.mtimeMs) / (1000 * 60 * 60);
 
-					if (ageHours > LOG_RETENTION_HOURS) {
-						unlinkSync(filePath);
+						if (ageHours > LOG_RETENTION_HOURS) {
+							await unlink(filePath);
+						}
+					} catch {
+						// Silently skip individual files
 					}
 				}
 			}
-		} catch (error) {
-			console.error("Failed to clean old logs:", error);
+		} catch {
+			// Silently swallow - log cleanup is best-effort
 		}
 	}
 }

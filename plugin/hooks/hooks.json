@@ -1,17 +1,6 @@
 {
   "description": "cc-obsidian-mem memory system hooks - SQLite architecture",
   "hooks": {
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bun run \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/session-start.ts\"",
-            "timeout": 30
-          }
-        ]
-      }
-    ],
     "UserPromptSubmit": [
       {
         "hooks": [

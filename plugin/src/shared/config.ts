@@ -70,11 +70,8 @@ export function loadConfig(): Config {
 	try {
 		const userConfig = JSON.parse(readFileSync(CONFIG_FILE, "utf-8"));
 		return mergeConfig(DEFAULT_CONFIG, userConfig);
-	} catch (error) {
-		console.warn(
-			`Failed to load config from ${CONFIG_FILE}, using defaults:`,
-			error
-		);
+	} catch {
+		// Silently return defaults - cannot write to stdout/stderr in MCP stdio context
 		return DEFAULT_CONFIG;
 	}
 }

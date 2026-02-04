@@ -66,7 +66,7 @@ async function main() {
 
 	const server = new McpServer({
 		name: "obsidian-mem",
-		version: "1.0.5",
+		version: "1.0.6",
 	});
 
 	// ========================================================================
@@ -1008,9 +1008,13 @@ async function main() {
 	await server.connect(transport);
 
 	logger.info("MCP server connected");
+
+	// Deferred log cleanup (non-blocking, after transport is connected)
+	logger.cleanOldLogsAsync().catch((err) => {
+		logger.debug("Log cleanup failed", { error: String(err) });
+	});
 }
 
-main().catch((error) => {
-	console.error("MCP server error:", error);
+main().catch(() => {
 	process.exit(1);
 });
